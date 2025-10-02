@@ -1,0 +1,29 @@
+# Archivos de entorno con credenciales
+.env
+
+# Binarios compilados de Go
+backend/cmd/server/server
+backend/cmd/server/server.exe
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Archivos de build de frontend
+frontend/dist/
+frontend/node_modules/
+frontend/.env.local
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Sistema operativo
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
