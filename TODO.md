@@ -23,6 +23,7 @@
 
 ### Backend
 - [ ] Chequear estado de mails en preproducción
+- [ ] Agregar complejidad al análisis de estado de mails (verificar por tipo de correo)
 
 ### Frontend
 - [ ]

@@ -1,25 +1,46 @@
 package monitors
 
 import (
-	"net/http"
+	"fmt"
 	"time"
 
 	"github.com/saltacompra/monitor/internal/models"
 )
 
-// CheckHTTP verifica si una URL responde correctamente
-func CheckHTTP(url string, checkID string, checkName string) models.Check {
+// HTTPCheckConfig contiene la configuración para verificaciones HTTP
+type HTTPCheckConfig struct {
+	URL              string
+	CheckID          string
+	CheckName        string
+	ExpectedContent  []string // Textos que deben estar presentes en el HTML
+	ValidateSSL      bool     // Si debe validar certificado SSL
+	SSLWarningDays   int      // Días antes de expiración para warning
+	TimeoutWarningMs int64    // Umbral de ms para warning
+	TimeoutErrorMs   int64    // Umbral de ms para error
+	TimeoutSeconds   int      // Timeout de la petición HTTP
+}
+
+// CheckHTTP verifica si una URL responde correctamente con validaciones completas
+func CheckHTTP(config HTTPCheckConfig) models.Check {
 	check := models.Check{
-		ID:        checkID,
+		ID:        config.CheckID,
 		Type:      "http",
-		Name:      checkName,
+		Name:      config.CheckName,
 		LastCheck: time.Now(),
+		Metadata:  make(map[string]interface{}),
 	}
 
-	start := time.Now()
-	resp, err := http.Get(url)
-	elapsed := time.Since(start).Milliseconds()
+	// Cliente HTTP con timeout
+	timeout := config.TimeoutSeconds
+	if timeout == 0 {
+		timeout = 30 // Default 30 segundos
+	}
+	client := getHTTPClient(timeout)
 
+	// Realizar petición HTTP
+	start := time.Now()
+	resp, err := client.Get(config.URL)
+	elapsed := time.Since(start).Milliseconds()
 	check.ResponseTime = elapsed
 
 	if err != nil {
@@ -29,15 +50,75 @@ func CheckHTTP(url string, checkID string, checkName string) models.Check {
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
-		check.Status = "ok"
-		check.Message = "Sitio accesible (HTTP " + resp.Status + ")"
-	} else if resp.StatusCode >= 500 {
-		check.Status = "error"
-		check.Message = "Error del servidor (HTTP " + resp.Status + ")"
+	// Lista de problemas encontrados
+	var issues []string
+	worstStatus := "ok"
+
+	// 1. Verificar código HTTP
+	if resp.StatusCode >= 500 {
+		issues = append(issues, fmt.Sprintf("Error del servidor (HTTP %d)", resp.StatusCode))
+		worstStatus = "error"
+	} else if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		issues = append(issues, fmt.Sprintf("Código HTTP inesperado: %d", resp.StatusCode))
+		if worstStatus == "ok" {
+			worstStatus = "warning"
+		}
+	}
+
+	// 2. Verificar tiempo de respuesta
+	timeStatus := evaluateResponseTime(elapsed, config.TimeoutWarningMs, config.TimeoutErrorMs)
+	check.Metadata["response_time_status"] = timeStatus
+
+	if timeStatus == "error" {
+		issues = append(issues, fmt.Sprintf("Tiempo de respuesta muy alto: %dms", elapsed))
+		worstStatus = "error"
+	} else if timeStatus == "warning" {
+		issues = append(issues, fmt.Sprintf("Tiempo de respuesta elevado: %dms", elapsed))
+		if worstStatus == "ok" {
+			worstStatus = "warning"
+		}
+	}
+
+	// 3. Verificar contenido esperado
+	if len(config.ExpectedContent) > 0 && resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		body, err := readResponseBody(resp)
+		if err != nil {
+			issues = append(issues, "Error al leer contenido: "+err.Error())
+			worstStatus = "error"
+		} else {
+			contentOk, contentMsg := checkContentPresence(body, config.ExpectedContent)
+			check.Metadata["content_validated"] = contentOk
+
+			if !contentOk {
+				issues = append(issues, contentMsg)
+				worstStatus = "error"
+			}
+		}
+	}
+
+	// 4. Verificar SSL
+	if config.ValidateSSL {
+		sslStatus, sslMsg, daysRemaining := validateSSLCertificate(config.URL, config.SSLWarningDays)
+		check.Metadata["ssl_status"] = sslStatus
+		check.Metadata["ssl_days_remaining"] = daysRemaining
+
+		if sslStatus == "error" {
+			issues = append(issues, sslMsg)
+			worstStatus = "error"
+		} else if sslStatus == "warning" {
+			issues = append(issues, sslMsg)
+			if worstStatus == "ok" {
+				worstStatus = "warning"
+			}
+		}
+	}
+
+	// Construir mensaje final
+	check.Status = worstStatus
+	if len(issues) > 0 {
+		check.Message = fmt.Sprintf("%s - Problemas: %v", resp.Status, issues)
 	} else {
-		check.Status = "warning"
-		check.Message = "Respuesta inesperada (HTTP " + resp.Status + ")"
+		check.Message = fmt.Sprintf("Sitio accesible y funcionando correctamente (HTTP %s, %dms)", resp.Status, elapsed)
 	}
 
 	return check

@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"log"
 	"net/http"
 	"sync"
 
@@ -22,6 +23,8 @@ func NewHandler(cfg config.Config) *Handler {
 
 // GetSystems devuelve el estado de todos los sistemas monitoreados
 func (h *Handler) GetSystems(w http.ResponseWriter, r *http.Request) {
+	log.Printf("[API] Ejecutando checks de sistemas...")
+
 	// Ejecutar todos los checks en paralelo
 	var wg sync.WaitGroup
 	systems := []models.System{}
@@ -44,6 +47,8 @@ func (h *Handler) GetSystems(w http.ResponseWriter, r *http.Request) {
 
 	wg.Wait()
 
+	log.Printf("[API] Checks completados. Sistemas verificados: %d", len(systems))
+
 	// Responder con JSON
 	response := map[string]interface{}{
 		"systems": systems,
@@ -64,21 +69,27 @@ func (h *Handler) checkSaltaCompraProd() models.System {
 		Checks:      []models.Check{},
 	}
 
-	// Check HTTP
-	httpCheck := monitors.CheckHTTP(
-		"https://saltacompra.gob.ar/",
-		"http-check",
-		"Sitio web accesible",
-	)
+	// Check HTTP con validaciones completas
+	httpCheck := monitors.CheckHTTP(monitors.HTTPCheckConfig{
+		URL:              "https://saltacompra.gob.ar/",
+		CheckID:          "http-check",
+		CheckName:        "Sitio web accesible",
+		ExpectedContent:  []string{"SALTA COMPRA - Portal de Compras Públicas de la Provincia de Salta"},
+		ValidateSSL:      true,
+		SSLWarningDays:   h.config.Monitors.SSLWarningDays,
+		TimeoutWarningMs: h.config.Monitors.HTTPTimeoutWarningMs,
+		TimeoutErrorMs:   h.config.Monitors.HTTPTimeoutErrorMs,
+		TimeoutSeconds:   h.config.Monitors.HTTPTimeoutSeconds,
+	})
 	system.Checks = append(system.Checks, httpCheck)
 
 	// Check servicio de mails
 	mailConfig := monitors.MailCheckConfig{
-		Host:                     h.config.Database.Host,
-		Port:                     h.config.Database.Port,
-		User:                     h.config.Database.User,
-		Password:                 h.config.Database.Password,
-		Database:                 h.config.Database.Database,
+		Host:                     h.config.DatabaseProd.Host,
+		Port:                     h.config.DatabaseProd.Port,
+		User:                     h.config.DatabaseProd.User,
+		Password:                 h.config.DatabaseProd.Password,
+		Database:                 h.config.DatabaseProd.Database,
 		MaxMinutesWithoutSending: h.config.Monitors.MailMaxMinutesWithoutSending,
 		MaxFailedCount:           h.config.Monitors.MailMaxFailedCount,
 	}
@@ -105,13 +116,32 @@ func (h *Handler) checkSaltaCompraPreProd() models.System {
 		Checks:      []models.Check{},
 	}
 
-	// Check HTTP
-	httpCheck := monitors.CheckHTTP(
-		"https://preproduccion.saltacompra.gob.ar/",
-		"http-check",
-		"Sitio web accesible",
-	)
+	// Check HTTP con validaciones completas
+	httpCheck := monitors.CheckHTTP(monitors.HTTPCheckConfig{
+		URL:              "https://preproduccion.saltacompra.gob.ar/",
+		CheckID:          "http-check",
+		CheckName:        "Sitio web accesible",
+		ExpectedContent:  []string{"SALTA COMPRA - Portal de Compras Públicas de la Provincia de Salta"},
+		ValidateSSL:      true,
+		SSLWarningDays:   h.config.Monitors.SSLWarningDays,
+		TimeoutWarningMs: h.config.Monitors.HTTPTimeoutWarningMs,
+		TimeoutErrorMs:   h.config.Monitors.HTTPTimeoutErrorMs,
+		TimeoutSeconds:   h.config.Monitors.HTTPTimeoutSeconds,
+	})
 	system.Checks = append(system.Checks, httpCheck)
+
+	// Check servicio de mails
+	mailConfig := monitors.MailCheckConfig{
+		Host:                     h.config.DatabasePreProd.Host,
+		Port:                     h.config.DatabasePreProd.Port,
+		User:                     h.config.DatabasePreProd.User,
+		Password:                 h.config.DatabasePreProd.Password,
+		Database:                 h.config.DatabasePreProd.Database,
+		MaxMinutesWithoutSending: h.config.Monitors.MailMaxMinutesWithoutSending,
+		MaxFailedCount:           h.config.Monitors.MailMaxFailedCount,
+	}
+	mailCheck := monitors.CheckMailService(mailConfig, "mail-service", "Servicio de correos")
+	system.Checks = append(system.Checks, mailCheck)
 
 	// Determinar estado general
 	system.Status = determineSystemStatus(system.Checks)
