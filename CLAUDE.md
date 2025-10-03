@@ -184,3 +184,5 @@ Servidor Ubuntu (compartido):
 ## Notas Técnicas
 
 Este documento será actualizado continuamente conforme se tomen decisiones técnicas fundamentadas y se descubran nuevos requisitos durante el proceso de desarrollo.
+
+**Ver también**: `TODO.md` para lista de tareas pendientes y mejoras futuras.
