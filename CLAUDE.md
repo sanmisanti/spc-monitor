@@ -55,18 +55,32 @@ Desarrollar una aplicación web centralizada que permita monitorear el estado op
 - **Infraestructura**: Servidores propios Windows Server
 - **Base de Datos**: SQL Server
 - **Ambientes**:
-  - Producción (servidor dedicado + BD propia)
-  - Preproducción (servidor dedicado + BD propia)
+  - **Producción**:
+    - VM dedicada para servidor web (Windows Server)
+    - VM dedicada para base de datos SQL Server
+    - URL: `https://saltacompra.gob.ar/`
+  - **Preproducción**:
+    - VM dedicada para servidor web (Windows Server)
+    - VM dedicada para base de datos SQL Server
+    - URL: `https://preproduccion.saltacompra.gob.ar/`
 
 ### 2. App.SaltaCompra
 - **Tecnología**: Next.js
-- **Infraestructura**: Servidor propio Ubuntu
+- **Infraestructura**: VM Ubuntu dedicada
 - **Base de Datos**: PostgreSQL
+- **Ubicación**: Dentro de VPN (requiere conexión VPN para checks internos)
+- **Nota**: Servidor contiene web + base de datos + otros sistemas a explorar
 
 ### 3. Sistema Google Apps Script
 - **Tecnología**: Google Apps Script
 - **Infraestructura**: Google Cloud Platform
-- **Storage**: Google Spreadsheets
+- **Storage**: Google Spreadsheets (como BD relacional)
+- **Funcionalidad**: Scripts de automatización para facilitar acciones sobre sheets
+
+### 4. Infraestructura Compartida
+- **Dominio**: `saltacompra.gob.ar` (compartido por prod, preprod y app)
+- **Monitoreo**: Expiración de dominio vía RDAP (NIC Argentina)
+- **Criticidad**: Alta (afecta a todos los sistemas si expira)
 
 **Nota**: Sistema extensible para agregar más aplicaciones en el futuro.
 
@@ -154,6 +168,49 @@ Servidor Ubuntu (compartido):
 1. **HTTP Health Checks**: Peticiones a endpoints de aplicaciones
 2. **Database Queries**: Consultas directas a BD para verificar actividad
 3. **Verificación de registros**: Queries específicas según lógica de negocio
+4. **RDAP Checks**: Consultas a servicio RDAP de NIC Argentina para monitorear expiración de dominios
+
+### Arquitectura de Sistemas
+
+**Decisión: Separación por Ambiente**
+
+Los sistemas se modelan como entidades independientes por ambiente (prod/preprod), en lugar de agruparlos por aplicación. Esta decisión se fundamenta en:
+
+1. **Claridad de estado**: Permite identificar rápidamente si producción o preproducción tienen problemas
+2. **Alertas granulares**: Diferentes niveles de criticidad (prod crítico, preprod menos urgente)
+3. **Visualización en dashboard**: Tarjetas/cards separadas por ambiente
+4. **Infraestructura compartida**: Elementos que afectan múltiples sistemas (dominio) se agrupan en un sistema independiente "Infraestructura Compartida"
+
+**Sistemas implementados:**
+- SaltaCompra Producción
+- SaltaCompra Preproducción
+- Infraestructura Compartida (dominio)
+
+### Decisiones de Implementación: Check de Mails
+
+**Problema identificado:** El campo `sent_status` en SQL Server Database Mail es numérico, y no se conocían con certeza todos los posibles estados.
+
+**Solución implementada:**
+
+1. **Conversión de estados en la query:**
+```sql
+CASE sent_status
+    WHEN 0 THEN 'unsent'
+    WHEN 1 THEN 'sent'
+    WHEN 3 THEN 'retrying'
+    ELSE 'failed'
+END as sent_status
+```
+
+2. **Conteo dinámico con mapa:** En lugar de hardcodear estados específicos, se usa `map[string]int` para contar automáticamente cualquier estado que aparezca en la BD.
+
+**Ventajas:**
+- Descubre automáticamente nuevos estados sin modificar código
+- No requiere conocimiento previo de todos los valores posibles
+- Escalable si SQL Server agrega estados en futuras versiones
+- Metadata completa con `status_counts` para análisis detallado
+
+**Tabla correcta:** `msdb.dbo.sysmail_mailitems` (no `sysmail_allitems` que es una vista diferente)
 
 ## Estado del Proyecto
 
@@ -163,15 +220,32 @@ Servidor Ubuntu (compartido):
 - ✅ Estructura del monorepo (backend Go)
 - ✅ Modelos de datos (System, Check)
 - ✅ HTTP check para SaltaCompra (prod/preprod)
-- ✅ DB check para servicio de correos (msdb.dbo.sysmail_allitems)
+  - Validación de código HTTP
+  - Verificación de contenido esperado
+  - Validación de certificado SSL con días restantes
+  - Umbrales de tiempo de respuesta (warning/error)
+- ✅ DB check para servicio de correos (msdb.dbo.sysmail_mailitems)
+  - Conteo dinámico de estados (sent, unsent, failed, retrying)
+  - Conversión de sent_status numérico a string vía CASE
+  - Detección de cola atascada (muchos unsent)
+  - Metadata con breakdown completo por estado
+- ✅ RDAP check para expiración de dominio
+  - Consulta a API RDAP de NIC Argentina
+  - Cálculo de días restantes hasta expiración
+  - Alertas por umbrales configurables
+- ✅ Sistema "Infraestructura Compartida"
 - ✅ API REST: GET /api/systems
 - ✅ Configuración vía variables de entorno (.env)
 - ✅ Servidor HTTP funcional
 
 ### Configuración
 - Variables en `.env`: credenciales SQL Server, umbrales de monitoreo
-- Usuario SQL: `readOnlyUser` con permisos SELECT en msdb.dbo.sysmail_allitems
-- Umbrales: 180 min sin mails = warning, >5 mails fallidos = error
+- Usuario SQL: `readOnlyUser` con permisos SELECT en msdb.dbo.sysmail_mailitems
+- Umbrales de monitoreo:
+  - Mails: 180 min sin envío = warning, >5 fallidos = error, >7 unsent = warning (cola atascada)
+  - SSL: 30 días antes = warning
+  - HTTP: 3000ms = warning, 10000ms = error
+  - Dominio: 60 días = warning, 30 días = error
 
 ### Pendiente
 - Frontend React + Vite

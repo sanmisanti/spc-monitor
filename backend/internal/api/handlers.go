@@ -45,6 +45,14 @@ func (h *Handler) GetSystems(w http.ResponseWriter, r *http.Request) {
 		systems = append(systems, system)
 	}()
 
+	// Sistema 3: Infraestructura Compartida
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		system := h.checkInfrastructure()
+		systems = append(systems, system)
+	}()
+
 	wg.Wait()
 
 	log.Printf("[API] Checks completados. Sistemas verificados: %d", len(systems))
@@ -92,6 +100,7 @@ func (h *Handler) checkSaltaCompraProd() models.System {
 		Database:                 h.config.DatabaseProd.Database,
 		MaxMinutesWithoutSending: h.config.Monitors.MailMaxMinutesWithoutSending,
 		MaxFailedCount:           h.config.Monitors.MailMaxFailedCount,
+		MaxUnsentCount:           h.config.Monitors.MailMaxUnsentCount,
 	}
 	mailCheck := monitors.CheckMailService(mailConfig, "mail-service", "Servicio de correos")
 	system.Checks = append(system.Checks, mailCheck)
@@ -139,9 +148,40 @@ func (h *Handler) checkSaltaCompraPreProd() models.System {
 		Database:                 h.config.DatabasePreProd.Database,
 		MaxMinutesWithoutSending: h.config.Monitors.MailMaxMinutesWithoutSending,
 		MaxFailedCount:           h.config.Monitors.MailMaxFailedCount,
+		MaxUnsentCount:           h.config.Monitors.MailMaxUnsentCount,
 	}
 	mailCheck := monitors.CheckMailService(mailConfig, "mail-service", "Servicio de correos")
 	system.Checks = append(system.Checks, mailCheck)
+
+	// Determinar estado general
+	system.Status = determineSystemStatus(system.Checks)
+	if len(system.Checks) > 0 {
+		system.LastCheck = system.Checks[0].LastCheck
+	}
+
+	return system
+}
+
+// checkInfrastructure verifica el estado de la infraestructura compartida
+func (h *Handler) checkInfrastructure() models.System {
+	system := models.System{
+		ID:          "infrastructure",
+		Name:        "Infraestructura Compartida",
+		Type:        "infrastructure",
+		Environment: "shared",
+		Status:      "unknown",
+		Checks:      []models.Check{},
+	}
+
+	// Check RDAP para expiración de dominio
+	rdapCheck := monitors.CheckRDAPDomain(monitors.RDAPCheckConfig{
+		Domain:      "saltacompra.gob.ar",
+		CheckID:     "domain-expiry",
+		CheckName:   "Expiración de dominio",
+		WarningDays: h.config.Monitors.DomainWarningDays,
+		ErrorDays:   h.config.Monitors.DomainErrorDays,
+	})
+	system.Checks = append(system.Checks, rdapCheck)
 
 	// Determinar estado general
 	system.Status = determineSystemStatus(system.Checks)

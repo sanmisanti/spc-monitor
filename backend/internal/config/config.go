@@ -31,10 +31,13 @@ type DatabaseConfig struct {
 type MonitorsConfig struct {
 	MailMaxMinutesWithoutSending int   // Minutos máximos sin enviar mails antes de warning
 	MailMaxFailedCount           int   // Cantidad máxima de mails fallidos antes de error
+	MailMaxUnsentCount           int   // Cantidad máxima de mails unsent antes de warning (cola atascada)
 	HTTPTimeoutWarningMs         int64 // Umbral de ms para warning en checks HTTP
 	HTTPTimeoutErrorMs           int64 // Umbral de ms para error en checks HTTP
 	SSLWarningDays               int   // Días antes de expiración SSL para warning
 	HTTPTimeoutSeconds           int   // Timeout general para peticiones HTTP
+	DomainWarningDays            int   // Días antes de expiración de dominio para warning
+	DomainErrorDays              int   // Días antes de expiración de dominio para error
 }
 
 // LoadConfig carga la configuración desde variables de entorno
@@ -60,10 +63,13 @@ func LoadConfig() Config {
 		Monitors: MonitorsConfig{
 			MailMaxMinutesWithoutSending: getEnvAsInt("MAIL_MAX_MINUTES_WITHOUT_SENDING", 180),
 			MailMaxFailedCount:           getEnvAsInt("MAIL_MAX_FAILED_COUNT", 5),
+			MailMaxUnsentCount:           getEnvAsInt("MAIL_MAX_UNSENT_COUNT", 7),
 			HTTPTimeoutWarningMs:         int64(getEnvAsInt("HTTP_TIMEOUT_WARNING_MS", 3000)),
 			HTTPTimeoutErrorMs:           int64(getEnvAsInt("HTTP_TIMEOUT_ERROR_MS", 10000)),
 			SSLWarningDays:               getEnvAsInt("SSL_WARNING_DAYS", 30),
 			HTTPTimeoutSeconds:           getEnvAsInt("HTTP_TIMEOUT_SECONDS", 30),
+			DomainWarningDays:            getEnvAsInt("DOMAIN_WARNING_DAYS", 60),
+			DomainErrorDays:              getEnvAsInt("DOMAIN_ERROR_DAYS", 30),
 		},
 	}
 }
