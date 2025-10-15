@@ -65,11 +65,18 @@ Desarrollar una aplicación web centralizada que permita monitorear el estado op
     - URL: `https://preproduccion.saltacompra.gob.ar/`
 
 ### 2. App.SaltaCompra
-- **Tecnología**: Next.js
-- **Infraestructura**: VM Ubuntu dedicada
-- **Base de Datos**: PostgreSQL
-- **Ubicación**: Dentro de VPN (requiere conexión VPN para checks internos)
-- **Nota**: Servidor contiene web + base de datos + otros sistemas a explorar
+- **Tecnología**: Next.js + PM2
+- **Infraestructura**: VM Ubuntu dedicada (IP: 172.17.1.241)
+- **Base de Datos**: PostgreSQL 16.2
+  - Base de datos: `app_spc`
+  - Schema principal: `users`
+  - Tabla monitoreada: `users.usuarios`
+- **URL**: `https://app.saltacompra.gob.ar/`
+- **Ubicación**: Dentro de VPN (requiere conexión VPN para checks de BD)
+- **Checks implementados**:
+  - HTTP: Accesible públicamente (con certificado SSL autofirmado/CA privada)
+  - PostgreSQL: Requiere VPN, verifica conteo de usuarios
+- **Nota**: Servidor contiene web + base de datos en la misma VM
 
 ### 3. Sistema Google Apps Script - Kairos
 - **Tecnología**: Google Apps Script
@@ -117,7 +124,7 @@ Desarrollar una aplicación web centralizada que permita monitorear el estado op
 - `godotenv`: Carga de variables de entorno desde .env
 - `google.golang.org/api/sheets/v4`: Google Sheets API v4
 - `google.golang.org/api/option`: Opciones de autenticación para Google APIs
-- `pgx`: Driver PostgreSQL (pendiente)
+- `pgx/v5`: Driver PostgreSQL nativo con soporte completo para tipos y características de PostgreSQL
 
 #### Frontend: React + Vite
 
@@ -177,6 +184,7 @@ Servidor Ubuntu (compartido):
 3. **Verificación de registros**: Queries específicas según lógica de negocio
 4. **RDAP Checks**: Consultas a servicio RDAP de NIC Argentina para monitorear expiración de dominios
 5. **Google Sheets Checks**: Verificación de actualizaciones en hojas de cálculo vía Google Sheets API v4
+6. **VPN Connectivity Checks**: Verificación de conectividad TCP a recursos internos antes de checks de BD
 
 ### Arquitectura de Sistemas
 
@@ -192,6 +200,7 @@ Los sistemas se modelan como entidades independientes por ambiente (prod/preprod
 **Sistemas implementados:**
 - SaltaCompra Producción
 - SaltaCompra Preproducción
+- App.SaltaCompra (con verificación de VPN)
 - Infraestructura Compartida (dominio)
 - Google Sheets - Kairos Actualizaciones
 
@@ -257,6 +266,52 @@ END as sent_status
 - Extensible para monitorear otras hojas de Google Sheets
 - No requiere modificar código para cambiar parámetros de validación
 
+### Decisiones de Implementación: Check de PostgreSQL con Verificación VPN
+
+**Requisito:** Monitorear App.SaltaCompra (Next.js + PostgreSQL) que se encuentra dentro de una VPN privada.
+
+**Problema identificado:** La base de datos PostgreSQL solo es accesible desde dentro de la red privada (VPN). Los checks fallarían si la VPN no está activa, dando errores confusos de timeout.
+
+**Solución implementada:**
+
+1. **Verificación previa de VPN:**
+   - Función `CheckVPNConnectivity()`: Intenta conexión TCP al host con timeout corto (2 segundos por defecto)
+   - Si la VPN no está disponible, el check falla inmediatamente con mensaje claro
+   - Evita timeouts largos esperando conexiones que nunca se establecerán
+
+2. **Check de PostgreSQL:**
+   - Query de validación: `SELECT COUNT(*) FROM users.usuarios`
+   - Verifica que la BD no solo esté online, sino que tenga datos reales
+   - Metadata incluye: versión de PostgreSQL, conteo de usuarios, estado de VPN
+
+3. **Configuración:**
+   - Driver: `pgx/v5` (driver nativo de PostgreSQL para Go)
+   - Host: `172.17.1.241` (IP interna en VPN)
+   - Base de datos: `app_spc`
+   - Timeout VPN: 2000ms (configurable vía `VPN_CHECK_TIMEOUT_MS`)
+
+**Ventajas:**
+- **Detección temprana**: Identifica problemas de VPN antes de intentar conectar a PostgreSQL
+- **Mensajes claros**: El usuario sabe inmediatamente si el problema es VPN o BD
+- **Sin timeouts largos**: Checks rápidos incluso cuando la VPN está caída
+- **Metadata rica**: Incluye conteo de usuarios y versión de servidor
+- **Extensible**: El mismo patrón puede usarse para otros recursos detrás de VPN
+
+**Estructura del check:**
+```go
+{
+  "status": "ok",
+  "message": "Conexión PostgreSQL exitosa. 15 usuarios registrados (63ms)",
+  "metadata": {
+    "database": "app_spc",
+    "server_version": "16.2",
+    "user_count": 15,
+    "vpn_available": true,
+    "vpn_check_host": "172.17.1.241"
+  }
+}
+```
+
 ### Decisiones de Implementación: Configuración Basada en Variables de Entorno
 
 **Problema identificado:** URLs, dominios y contenidos esperados estaban hardcodeados en el código, dificultando cambios y testing.
@@ -319,12 +374,20 @@ END as sent_status
   - Validación de coherencia entre TimeStamp y nombre de archivo de BD
   - Autenticación flexible (Service Account o API Key)
   - Umbrales configurables para warnings y errores
+- ✅ PostgreSQL check para App.SaltaCompra
+  - Verificación de VPN previa al check de BD
+  - Query de validación con conteo de usuarios
+  - Metadata con versión de servidor y estado de VPN
+  - Detección temprana de problemas de conectividad
 - ✅ Sistema "Infraestructura Compartida"
 - ✅ Sistema "Google Sheets - Kairos Actualizaciones"
+- ✅ Sistema "App.SaltaCompra"
 - ✅ API REST: GET /api/systems
 - ✅ Configuración 100% vía variables de entorno (.env)
   - URLs y contenidos esperados configurables
   - Dominios y servicios RDAP configurables
+  - Credenciales PostgreSQL configurables
+  - VPN check host y timeout configurables
   - Umbrales y parámetros de checks configurables
   - Archivo `.env.example` como template
 - ✅ Servidor HTTP funcional
@@ -345,9 +408,14 @@ END as sent_status
 
 3. **Credenciales:**
    - SQL Server prod/preprod: host, port, user, password, database
+   - PostgreSQL App.SaltaCompra: host, port, user, password, database
    - Google Sheets: spreadsheet ID, sheet name, auth method, credentials file path
 
-4. **Umbrales de monitoreo:**
+4. **VPN:**
+   - `VPN_CHECK_HOST`: Host para verificar conectividad VPN
+   - `VPN_CHECK_TIMEOUT_MS`: Timeout en ms para verificación VPN (default: 2000)
+
+5. **Umbrales de monitoreo:**
    - Mails: 180 min sin envío = warning, >5 fallidos = error, >7 unsent = warning (cola atascada)
    - SSL: 30 días antes = warning
    - HTTP: 3000ms = warning, 10000ms = error
@@ -361,10 +429,10 @@ END as sent_status
 
 ### Pendiente
 - Frontend React + Vite
-- Checks para App.SaltaCompra (PostgreSQL)
 - Jobs automáticos periódicos (scheduler)
 - WebSocket para updates en tiempo real
 - Autenticación y seguridad
+- Manejo de certificados SSL autofirmados/CA privadas
 
 ## Notas Técnicas
 

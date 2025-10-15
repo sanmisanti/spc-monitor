@@ -6,8 +6,10 @@
 - [ ] Implementar scheduler para jobs automáticos periódicos
 - [ ] Agregar WebSocket para updates en tiempo real
 - [ ] Implementar autenticación y seguridad
-- [ ] Agregar checks para App.SaltaCompra (PostgreSQL)
-- [ ] Agregar checks para Google Apps Script
+- [x] Agregar checks para App.SaltaCompra (PostgreSQL)
+- [x] Agregar verificación de VPN previa a checks de PostgreSQL
+- [x] Agregar checks para Google Apps Script (Kairos)
+- [ ] Implementar manejo de certificados SSL autofirmados/CA privadas
 - [ ] Analizar y refactorizar handlers.go (extraer configuración de sistemas hardcodeada, separar concerns)
 
 ### Frontend

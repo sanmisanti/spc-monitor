@@ -61,6 +61,14 @@ func (h *Handler) GetSystems(w http.ResponseWriter, r *http.Request) {
 		systems = append(systems, system)
 	}()
 
+	// Sistema 5: App.SaltaCompra
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		system := h.checkAppSaltaCompra()
+		systems = append(systems, system)
+	}()
+
 	wg.Wait()
 
 	log.Printf("[API] Checks completados. Sistemas verificados: %d", len(systems))
@@ -227,6 +235,54 @@ func (h *Handler) checkGoogleSheetsKairos() models.System {
 		CheckName:       "Actualización diaria Kairos",
 	})
 	system.Checks = append(system.Checks, kairosCheck)
+
+	// Determinar estado general
+	system.Status = determineSystemStatus(system.Checks)
+	if len(system.Checks) > 0 {
+		system.LastCheck = system.Checks[0].LastCheck
+	}
+
+	return system
+}
+
+// checkAppSaltaCompra verifica el estado de App.SaltaCompra
+func (h *Handler) checkAppSaltaCompra() models.System {
+	system := models.System{
+		ID:          "app-saltacompra",
+		Name:        "App.SaltaCompra",
+		Type:        "web",
+		Environment: "prod",
+		Status:      "unknown",
+		Checks:      []models.Check{},
+	}
+
+	// Check HTTP (público)
+	httpCheck := monitors.CheckHTTP(monitors.HTTPCheckConfig{
+		URL:              h.config.AppSaltaCompra.URL,
+		CheckID:          "http-check",
+		CheckName:        "Sitio web accesible",
+		ExpectedContent:  []string{h.config.AppSaltaCompra.ExpectedContent},
+		ValidateSSL:      true,
+		SSLWarningDays:   h.config.Monitors.SSLWarningDays,
+		TimeoutWarningMs: h.config.Monitors.HTTPTimeoutWarningMs,
+		TimeoutErrorMs:   h.config.Monitors.HTTPTimeoutErrorMs,
+		TimeoutSeconds:   h.config.Monitors.HTTPTimeoutSeconds,
+	})
+	system.Checks = append(system.Checks, httpCheck)
+
+	// Check PostgreSQL (requiere VPN)
+	pgCheck := monitors.CheckPostgreSQL(monitors.PostgreSQLCheckConfig{
+		Host:         h.config.PostgreSQLAppSPC.Host,
+		Port:         h.config.PostgreSQLAppSPC.Port,
+		User:         h.config.PostgreSQLAppSPC.User,
+		Password:     h.config.PostgreSQLAppSPC.Password,
+		Database:     h.config.PostgreSQLAppSPC.Database,
+		CheckID:      "postgresql-check",
+		CheckName:    "Base de datos PostgreSQL",
+		VPNCheckHost: h.config.VPNCheck.Host,
+		VPNTimeoutMs: h.config.VPNCheck.TimeoutMs,
+	})
+	system.Checks = append(system.Checks, pgCheck)
 
 	// Determinar estado general
 	system.Status = determineSystemStatus(system.Checks)

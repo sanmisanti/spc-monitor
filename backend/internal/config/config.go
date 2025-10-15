@@ -7,13 +7,16 @@ import (
 
 // Config contiene toda la configuración de la aplicación
 type Config struct {
-	Server          ServerConfig
-	DatabaseProd    DatabaseConfig
-	DatabasePreProd DatabaseConfig
-	GoogleSheets    GoogleSheetsConfig
-	SaltaCompra     SaltaCompraConfig
-	Infrastructure  InfrastructureConfig
-	Monitors        MonitorsConfig
+	Server             ServerConfig
+	DatabaseProd       DatabaseConfig
+	DatabasePreProd    DatabaseConfig
+	PostgreSQLAppSPC   PostgreSQLConfig
+	GoogleSheets       GoogleSheetsConfig
+	SaltaCompra        SaltaCompraConfig
+	AppSaltaCompra     AppSaltaCompraConfig
+	Infrastructure     InfrastructureConfig
+	Monitors           MonitorsConfig
+	VPNCheck           VPNCheckConfig
 }
 
 // ServerConfig configuración del servidor HTTP
@@ -55,6 +58,27 @@ type SaltaCompraConfig struct {
 type InfrastructureConfig struct {
 	Domain      string
 	RDAPBaseURL string
+}
+
+// PostgreSQLConfig configuración de conexión a PostgreSQL
+type PostgreSQLConfig struct {
+	Host     string
+	Port     int
+	User     string
+	Password string
+	Database string
+}
+
+// AppSaltaCompraConfig configuración para monitoreo de App.SaltaCompra
+type AppSaltaCompraConfig struct {
+	URL             string
+	ExpectedContent string
+}
+
+// VPNCheckConfig configuración para verificación de VPN
+type VPNCheckConfig struct {
+	Host       string // Host para verificar conectividad VPN (normalmente el host de PostgreSQL)
+	TimeoutMs  int    // Timeout en milisegundos para la verificación
 }
 
 // MonitorsConfig configuración de umbrales para monitores
@@ -110,6 +134,21 @@ func LoadConfig() Config {
 		Infrastructure: InfrastructureConfig{
 			Domain:      getEnv("INFRASTRUCTURE_DOMAIN", "saltacompra.gob.ar"),
 			RDAPBaseURL: getEnv("RDAP_BASE_URL", "https://rdap.nic.ar/domain/"),
+		},
+		PostgreSQLAppSPC: PostgreSQLConfig{
+			Host:     getEnv("DB_APPSALTACOMPRA_HOST", "localhost"),
+			Port:     getEnvAsInt("DB_APPSALTACOMPRA_PORT", 5432),
+			User:     getEnv("DB_APPSALTACOMPRA_USER", "postgres"),
+			Password: getEnv("DB_APPSALTACOMPRA_PASSWORD", ""),
+			Database: getEnv("DB_APPSALTACOMPRA_NAME", "postgres"),
+		},
+		AppSaltaCompra: AppSaltaCompraConfig{
+			URL:             getEnv("APPSALTACOMPRA_URL", "https://app.saltacompra.gob.ar/"),
+			ExpectedContent: getEnv("APPSALTACOMPRA_EXPECTED_CONTENT", "SALTACOMPRA"),
+		},
+		VPNCheck: VPNCheckConfig{
+			Host:      getEnv("VPN_CHECK_HOST", ""),
+			TimeoutMs: getEnvAsInt("VPN_CHECK_TIMEOUT_MS", 2000),
 		},
 		Monitors: MonitorsConfig{
 			MailMaxMinutesWithoutSending: getEnvAsInt("MAIL_MAX_MINUTES_WITHOUT_SENDING", 180),

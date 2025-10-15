@@ -10,8 +10,8 @@ import (
 )
 
 func main() {
-	// Cargar archivo .env
-	if err := godotenv.Load(".env"); err != nil {
+	// Cargar archivo .env (desde el directorio raíz del proyecto)
+	if err := godotenv.Load("../.env"); err != nil {
 		log.Println("No se pudo cargar .env, usando variables de entorno del sistema")
 	}
 
