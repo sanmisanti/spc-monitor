@@ -13,6 +13,7 @@ import (
 // RDAPCheckConfig contiene la configuración para verificaciones RDAP
 type RDAPCheckConfig struct {
 	Domain      string
+	RDAPBaseURL string // URL base del servicio RDAP (ej: https://rdap.nic.ar/domain/)
 	CheckID     string
 	CheckName   string
 	WarningDays int // Días antes de expiración para warning
@@ -41,8 +42,12 @@ func CheckRDAPDomain(config RDAPCheckConfig) models.Check {
 		Metadata:  make(map[string]interface{}),
 	}
 
-	// URL del servicio RDAP de NIC Argentina
-	url := fmt.Sprintf("https://rdap.nic.ar/domain/%s", config.Domain)
+	// URL del servicio RDAP (configurable vía env var)
+	baseURL := config.RDAPBaseURL
+	if baseURL == "" {
+		baseURL = "https://rdap.nic.ar/domain/" // Fallback por defecto
+	}
+	url := fmt.Sprintf("%s%s", baseURL, config.Domain)
 
 	// Realizar petición HTTP
 	start := time.Now()

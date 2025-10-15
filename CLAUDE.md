@@ -71,11 +71,17 @@ Desarrollar una aplicación web centralizada que permita monitorear el estado op
 - **Ubicación**: Dentro de VPN (requiere conexión VPN para checks internos)
 - **Nota**: Servidor contiene web + base de datos + otros sistemas a explorar
 
-### 3. Sistema Google Apps Script
+### 3. Sistema Google Apps Script - Kairos
 - **Tecnología**: Google Apps Script
 - **Infraestructura**: Google Cloud Platform
 - **Storage**: Google Spreadsheets (como BD relacional)
-- **Funcionalidad**: Scripts de automatización para facilitar acciones sobre sheets
+- **Funcionalidad**: Scripts de automatización para actualización de base de datos de precios Kairos
+- **Hoja monitoreada**: "Log Actualizaciones Kairos"
+  - Registro diario automático de actualizaciones
+  - Columnas monitoreadas:
+    - TimeStamp (columna A): Fecha en formato YYYY-MM-DD
+    - Nombre Archivo (columna C): Base de datos utilizada (bd_YYYYMMDD.zip)
+  - **Validación**: Verificar que la última actualización sea del día actual y use la BD correspondiente al mismo día
 
 ### 4. Infraestructura Compartida
 - **Dominio**: `saltacompra.gob.ar` (compartido por prod, preprod y app)
@@ -109,8 +115,9 @@ Desarrollar una aplicación web centralizada que permita monitorear el estado op
 **Librerías:**
 - `go-mssqldb`: Conexión a SQL Server
 - `godotenv`: Carga de variables de entorno desde .env
+- `google.golang.org/api/sheets/v4`: Google Sheets API v4
+- `google.golang.org/api/option`: Opciones de autenticación para Google APIs
 - `pgx`: Driver PostgreSQL (pendiente)
-- `google-api-go-client`: Google APIs (pendiente)
 
 #### Frontend: React + Vite
 
@@ -169,6 +176,7 @@ Servidor Ubuntu (compartido):
 2. **Database Queries**: Consultas directas a BD para verificar actividad
 3. **Verificación de registros**: Queries específicas según lógica de negocio
 4. **RDAP Checks**: Consultas a servicio RDAP de NIC Argentina para monitorear expiración de dominios
+5. **Google Sheets Checks**: Verificación de actualizaciones en hojas de cálculo vía Google Sheets API v4
 
 ### Arquitectura de Sistemas
 
@@ -185,6 +193,7 @@ Los sistemas se modelan como entidades independientes por ambiente (prod/preprod
 - SaltaCompra Producción
 - SaltaCompra Preproducción
 - Infraestructura Compartida (dominio)
+- Google Sheets - Kairos Actualizaciones
 
 ### Decisiones de Implementación: Check de Mails
 
@@ -212,6 +221,78 @@ END as sent_status
 
 **Tabla correcta:** `msdb.dbo.sysmail_mailitems` (no `sysmail_allitems` que es una vista diferente)
 
+### Decisiones de Implementación: Check de Google Sheets (Kairos)
+
+**Requisito:** Monitorear que la hoja "Log Actualizaciones Kairos" tenga un registro del día actual con la base de datos correcta.
+
+**Solución implementada:**
+
+1. **Autenticación flexible vía variables de entorno:**
+   - Soporta Service Account (recomendado para backend)
+   - Soporta API Key (para sheets públicos)
+   - Ruta configurable al archivo de credenciales JSON
+
+2. **Validaciones implementadas:**
+   - Formato de fecha en TimeStamp (YYYY-MM-DD)
+   - Formato de nombre de archivo (bd_YYYYMMDD.zip)
+   - Coherencia entre fecha del TimeStamp y fecha extraída del nombre de archivo
+   - Antigüedad de los datos (días desde última actualización)
+
+3. **Estados del check:**
+   - **ok**: Datos de hoy con BD correcta
+   - **warning**: Datos de 1 día atrás (configurable vía `GSHEETS_WARNING_DAYS`)
+   - **error**: Datos de 2+ días atrás o inconsistencias entre TimeStamp y archivo (configurable vía `GSHEETS_ERROR_DAYS`)
+
+4. **Metadata proporcionada:**
+   - `last_timestamp`: Fecha del último registro
+   - `last_filename`: Nombre del archivo de BD utilizado
+   - `filename_date`: Fecha extraída del nombre de archivo
+   - `expected_filename`: Nombre de archivo esperado según TimeStamp
+   - `days_old`: Días desde la última actualización
+   - `total_rows`: Total de registros en la hoja (sin headers)
+
+**Ventajas:**
+- Configuración 100% vía variables de entorno (columnas, umbrales, credenciales)
+- Validación doble para detectar inconsistencias
+- Extensible para monitorear otras hojas de Google Sheets
+- No requiere modificar código para cambiar parámetros de validación
+
+### Decisiones de Implementación: Configuración Basada en Variables de Entorno
+
+**Problema identificado:** URLs, dominios y contenidos esperados estaban hardcodeados en el código, dificultando cambios y testing.
+
+**Solución implementada:**
+
+1. **Nuevas estructuras de configuración en `config.go`:**
+   - `SaltaCompraConfig`: URLs y contenido esperado para prod/preprod
+   - `InfrastructureConfig`: Dominio y URL base de servicio RDAP
+
+2. **Variables de entorno agregadas:**
+   ```bash
+   # SaltaCompra
+   SALTACOMPRA_PROD_URL=https://saltacompra.gob.ar/
+   SALTACOMPRA_PROD_EXPECTED_CONTENT=SALTA COMPRA - Portal de Compras...
+   SALTACOMPRA_PREPROD_URL=https://preproduccion.saltacompra.gob.ar/
+   SALTACOMPRA_PREPROD_EXPECTED_CONTENT=SALTA COMPRA - Portal de Compras...
+
+   # Infraestructura
+   INFRASTRUCTURE_DOMAIN=saltacompra.gob.ar
+   RDAP_BASE_URL=https://rdap.nic.ar/domain/
+   ```
+
+3. **Refactoring realizado:**
+   - `handlers.go`: Reemplazados valores hardcodeados por referencias a configuración
+   - `rdap_domain_check.go`: URL base RDAP ahora configurable (mantiene fallback)
+   - Todos los checks ahora reciben configuración vía structs
+
+**Ventajas:**
+- **Flexibilidad**: Cambiar URLs, dominios o contenido sin modificar código
+- **Mantenibilidad**: Configuración centralizada en `.env`
+- **Testing**: Fácil crear diferentes configuraciones para dev/staging/prod
+- **Extensibilidad**: Agregar más dominios o servicios RDAP sin cambios de código
+- **Reutilización**: Mismo código puede monitorear diferentes instancias
+- **Valores por defecto**: Config tiene fallbacks para facilitar desarrollo
+
 ## Estado del Proyecto
 
 **Fase Actual**: MVP Backend funcional
@@ -233,24 +314,54 @@ END as sent_status
   - Consulta a API RDAP de NIC Argentina
   - Cálculo de días restantes hasta expiración
   - Alertas por umbrales configurables
+- ✅ Google Sheets check para Kairos
+  - Verificación de actualización diaria en "Log Actualizaciones Kairos"
+  - Validación de coherencia entre TimeStamp y nombre de archivo de BD
+  - Autenticación flexible (Service Account o API Key)
+  - Umbrales configurables para warnings y errores
 - ✅ Sistema "Infraestructura Compartida"
+- ✅ Sistema "Google Sheets - Kairos Actualizaciones"
 - ✅ API REST: GET /api/systems
-- ✅ Configuración vía variables de entorno (.env)
+- ✅ Configuración 100% vía variables de entorno (.env)
+  - URLs y contenidos esperados configurables
+  - Dominios y servicios RDAP configurables
+  - Umbrales y parámetros de checks configurables
+  - Archivo `.env.example` como template
 - ✅ Servidor HTTP funcional
 
 ### Configuración
-- Variables en `.env`: credenciales SQL Server, umbrales de monitoreo
+
+**Archivo `.env` (base de toda la configuración):**
+
+1. **URLs y Contenidos:**
+   - `SALTACOMPRA_PROD_URL`: URL de producción
+   - `SALTACOMPRA_PROD_EXPECTED_CONTENT`: Texto esperado en HTML de prod
+   - `SALTACOMPRA_PREPROD_URL`: URL de preproducción
+   - `SALTACOMPRA_PREPROD_EXPECTED_CONTENT`: Texto esperado en HTML de preprod
+
+2. **Infraestructura:**
+   - `INFRASTRUCTURE_DOMAIN`: Dominio a monitorear
+   - `RDAP_BASE_URL`: URL base del servicio RDAP (ej: https://rdap.nic.ar/domain/)
+
+3. **Credenciales:**
+   - SQL Server prod/preprod: host, port, user, password, database
+   - Google Sheets: spreadsheet ID, sheet name, auth method, credentials file path
+
+4. **Umbrales de monitoreo:**
+   - Mails: 180 min sin envío = warning, >5 fallidos = error, >7 unsent = warning (cola atascada)
+   - SSL: 30 días antes = warning
+   - HTTP: 3000ms = warning, 10000ms = error
+   - Dominio: 60 días = warning, 30 días = error
+   - Google Sheets: 1 día = warning, 2 días = error
+
+**Archivos complementarios:**
+- `.env.example`: Template con todas las variables disponibles
+- `./credentials/service-account.json`: Service Account de Google (gitignored)
 - Usuario SQL: `readOnlyUser` con permisos SELECT en msdb.dbo.sysmail_mailitems
-- Umbrales de monitoreo:
-  - Mails: 180 min sin envío = warning, >5 fallidos = error, >7 unsent = warning (cola atascada)
-  - SSL: 30 días antes = warning
-  - HTTP: 3000ms = warning, 10000ms = error
-  - Dominio: 60 días = warning, 30 días = error
 
 ### Pendiente
 - Frontend React + Vite
 - Checks para App.SaltaCompra (PostgreSQL)
-- Checks para Google Apps Script
 - Jobs automáticos periódicos (scheduler)
 - WebSocket para updates en tiempo real
 - Autenticación y seguridad

@@ -1,6 +1,10 @@
 # Archivos de entorno con credenciales
 .env
 
+# Credenciales de Google (service account keys)
+backend/credentials/
+credentials/
+
 # Binarios compilados de Go
 backend/cmd/server/server
 backend/cmd/server/server.exe

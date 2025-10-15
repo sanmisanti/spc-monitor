@@ -53,6 +53,14 @@ func (h *Handler) GetSystems(w http.ResponseWriter, r *http.Request) {
 		systems = append(systems, system)
 	}()
 
+	// Sistema 4: Google Sheets - Kairos
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		system := h.checkGoogleSheetsKairos()
+		systems = append(systems, system)
+	}()
+
 	wg.Wait()
 
 	log.Printf("[API] Checks completados. Sistemas verificados: %d", len(systems))
@@ -79,10 +87,10 @@ func (h *Handler) checkSaltaCompraProd() models.System {
 
 	// Check HTTP con validaciones completas
 	httpCheck := monitors.CheckHTTP(monitors.HTTPCheckConfig{
-		URL:              "https://saltacompra.gob.ar/",
+		URL:              h.config.SaltaCompra.ProdURL,
 		CheckID:          "http-check",
 		CheckName:        "Sitio web accesible",
-		ExpectedContent:  []string{"SALTA COMPRA - Portal de Compras Públicas de la Provincia de Salta"},
+		ExpectedContent:  []string{h.config.SaltaCompra.ProdExpectedContent},
 		ValidateSSL:      true,
 		SSLWarningDays:   h.config.Monitors.SSLWarningDays,
 		TimeoutWarningMs: h.config.Monitors.HTTPTimeoutWarningMs,
@@ -127,10 +135,10 @@ func (h *Handler) checkSaltaCompraPreProd() models.System {
 
 	// Check HTTP con validaciones completas
 	httpCheck := monitors.CheckHTTP(monitors.HTTPCheckConfig{
-		URL:              "https://preproduccion.saltacompra.gob.ar/",
+		URL:              h.config.SaltaCompra.PreProdURL,
 		CheckID:          "http-check",
 		CheckName:        "Sitio web accesible",
-		ExpectedContent:  []string{"SALTA COMPRA - Portal de Compras Públicas de la Provincia de Salta"},
+		ExpectedContent:  []string{h.config.SaltaCompra.PreProdExpectedContent},
 		ValidateSSL:      true,
 		SSLWarningDays:   h.config.Monitors.SSLWarningDays,
 		TimeoutWarningMs: h.config.Monitors.HTTPTimeoutWarningMs,
@@ -175,13 +183,50 @@ func (h *Handler) checkInfrastructure() models.System {
 
 	// Check RDAP para expiración de dominio
 	rdapCheck := monitors.CheckRDAPDomain(monitors.RDAPCheckConfig{
-		Domain:      "saltacompra.gob.ar",
+		Domain:      h.config.Infrastructure.Domain,
+		RDAPBaseURL: h.config.Infrastructure.RDAPBaseURL,
 		CheckID:     "domain-expiry",
 		CheckName:   "Expiración de dominio",
 		WarningDays: h.config.Monitors.DomainWarningDays,
 		ErrorDays:   h.config.Monitors.DomainErrorDays,
 	})
 	system.Checks = append(system.Checks, rdapCheck)
+
+	// Determinar estado general
+	system.Status = determineSystemStatus(system.Checks)
+	if len(system.Checks) > 0 {
+		system.LastCheck = system.Checks[0].LastCheck
+	}
+
+	return system
+}
+
+// checkGoogleSheetsKairos verifica el estado del sistema Google Sheets Kairos
+func (h *Handler) checkGoogleSheetsKairos() models.System {
+	system := models.System{
+		ID:          "google-sheets-kairos",
+		Name:        "Google Sheets - Kairos Actualizaciones",
+		Type:        "google-script",
+		Environment: "prod",
+		Status:      "unknown",
+		Checks:      []models.Check{},
+	}
+
+	// Check de actualización diaria
+	kairosCheck := monitors.CheckGoogleSheetsKairos(monitors.GoogleSheetsCheckConfig{
+		SpreadsheetID:   h.config.GoogleSheets.SpreadsheetID,
+		SheetName:       h.config.GoogleSheets.SheetName,
+		AuthMethod:      h.config.GoogleSheets.AuthMethod,
+		CredentialsFile: h.config.GoogleSheets.CredentialsFile,
+		APIKey:          h.config.GoogleSheets.APIKey,
+		TimestampColumn: h.config.GoogleSheets.TimestampColumn,
+		FilenameColumn:  h.config.GoogleSheets.FilenameColumn,
+		WarningDays:     h.config.GoogleSheets.WarningDays,
+		ErrorDays:       h.config.GoogleSheets.ErrorDays,
+		CheckID:         "kairos-daily-update",
+		CheckName:       "Actualización diaria Kairos",
+	})
+	system.Checks = append(system.Checks, kairosCheck)
 
 	// Determinar estado general
 	system.Status = determineSystemStatus(system.Checks)
