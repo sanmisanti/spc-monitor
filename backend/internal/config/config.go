@@ -19,6 +19,8 @@ type Config struct {
 	Infrastructure     InfrastructureConfig
 	Monitors           MonitorsConfig
 	VPNCheck           VPNCheckConfig
+	Scheduler          SchedulerConfig
+	Cache              CacheConfig
 }
 
 // ServerConfig configuración del servidor HTTP
@@ -97,6 +99,17 @@ type MonitorsConfig struct {
 	DomainErrorDays              int   // Días antes de expiración de dominio para error
 }
 
+// SchedulerConfig configuración para el background worker
+type SchedulerConfig struct {
+	IntervalMinutes     int // Intervalo en minutos para ejecutar checks automáticamente
+	IdleTimeoutMinutes  int // Minutos sin actividad antes de pausar el worker
+}
+
+// CacheConfig configuración para el cache de sistemas
+type CacheConfig struct {
+	MaxAgeMinutes int // Edad máxima en minutos antes de considerar datos desactualizados
+}
+
 // LoadConfig carga la configuración desde variables de entorno
 // Retorna error si faltan variables requeridas o tienen valores inválidos
 func LoadConfig() (Config, error) {
@@ -119,6 +132,7 @@ func LoadConfig() (Config, error) {
 		"MAIL_MAX_MINUTES_WITHOUT_SENT", "MAIL_DAILY_WARNING_FAILED_PERCENT", "MAIL_DAILY_ERROR_FAILED_PERCENT",
 		"HTTP_TIMEOUT_WARNING_MS", "HTTP_TIMEOUT_ERROR_MS", "HTTP_TIMEOUT_SECONDS",
 		"SSL_WARNING_DAYS", "DOMAIN_WARNING_DAYS", "DOMAIN_ERROR_DAYS",
+		"BACKGROUND_CHECK_INTERVAL_MINUTES", "WORKER_IDLE_TIMEOUT_MINUTES", "CACHE_MAX_AGE_MINUTES",
 	}
 
 	for _, v := range requiredVars {
@@ -197,6 +211,13 @@ func LoadConfig() (Config, error) {
 			HTTPTimeoutSeconds:           mustGetEnvAsInt("HTTP_TIMEOUT_SECONDS"),
 			DomainWarningDays:            mustGetEnvAsInt("DOMAIN_WARNING_DAYS"),
 			DomainErrorDays:              mustGetEnvAsInt("DOMAIN_ERROR_DAYS"),
+		},
+		Scheduler: SchedulerConfig{
+			IntervalMinutes:    mustGetEnvAsInt("BACKGROUND_CHECK_INTERVAL_MINUTES"),
+			IdleTimeoutMinutes: mustGetEnvAsInt("WORKER_IDLE_TIMEOUT_MINUTES"),
+		},
+		Cache: CacheConfig{
+			MaxAgeMinutes: mustGetEnvAsInt("CACHE_MAX_AGE_MINUTES"),
 		},
 	}
 

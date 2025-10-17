@@ -1,0 +1,294 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Test SSE - Monitor</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            max-width: 1200px;
+            margin: 20px auto;
+            padding: 20px;
+            background: #f5f5f5;
+        }
+        .controls {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        button {
+            background: #007bff;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 4px;
+            cursor: pointer;
+            margin-right: 10px;
+            font-size: 14px;
+        }
+        button:hover {
+            background: #0056b3;
+        }
+        button.disconnect {
+            background: #dc3545;
+        }
+        button.disconnect:hover {
+            background: #c82333;
+        }
+        .status {
+            display: inline-block;
+            padding: 5px 10px;
+            border-radius: 4px;
+            font-size: 12px;
+            font-weight: bold;
+        }
+        .status.connected {
+            background: #28a745;
+            color: white;
+        }
+        .status.disconnected {
+            background: #6c757d;
+            color: white;
+        }
+        .systems {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(350px, 1fr));
+            gap: 15px;
+        }
+        .system-card {
+            background: white;
+            border-radius: 8px;
+            padding: 15px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            animation: fadeIn 0.3s ease-in;
+        }
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        .system-card h3 {
+            margin: 0 0 10px 0;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .system-card .badge {
+            font-size: 11px;
+            padding: 3px 8px;
+            border-radius: 3px;
+            font-weight: 500;
+        }
+        .badge.prod { background: #dc3545; color: white; }
+        .badge.preprod { background: #ffc107; color: black; }
+        .badge.shared { background: #6c757d; color: white; }
+        .system-status {
+            font-size: 18px;
+            margin: 10px 0;
+        }
+        .system-status.online { color: #28a745; }
+        .system-status.warning { color: #ffc107; }
+        .system-status.error { color: #dc3545; }
+        .checks {
+            margin-top: 10px;
+            font-size: 13px;
+        }
+        .check {
+            padding: 8px;
+            margin: 5px 0;
+            background: #f8f9fa;
+            border-radius: 4px;
+            border-left: 3px solid #28a745;
+        }
+        .check.warning {
+            border-left-color: #ffc107;
+        }
+        .check.error {
+            border-left-color: #dc3545;
+        }
+        .events-log {
+            background: #1e1e1e;
+            color: #d4d4d4;
+            padding: 15px;
+            border-radius: 8px;
+            font-family: 'Courier New', monospace;
+            font-size: 12px;
+            max-height: 300px;
+            overflow-y: auto;
+            margin-top: 20px;
+        }
+        .event-line {
+            margin: 2px 0;
+            padding: 2px 0;
+        }
+        .event-type {
+            color: #4ec9b0;
+            font-weight: bold;
+        }
+    </style>
+</head>
+<body>
+    <h1>🔍 Monitor de Sistemas - Test SSE</h1>
+
+    <div class="controls">
+        <h3>Conexión SSE <span id="connection-status" class="status disconnected">Desconectado</span></h3>
+        <button id="connect-btn" onclick="connectSSE()">Conectar SSE</button>
+        <button id="disconnect-btn" class="disconnect" onclick="disconnectSSE()" disabled>Desconectar</button>
+        <button onclick="getCachedSystems()">Obtener Cache (GET)</button>
+        <button onclick="refreshAll()">Refresh All (POST)</button>
+    </div>
+
+    <div id="systems-container" class="systems"></div>
+
+    <h3>📡 Log de Eventos SSE</h3>
+    <div id="events-log" class="events-log"></div>
+
+    <script>
+        let eventSource = null;
+        const systems = new Map();
+
+        function connectSSE() {
+            if (eventSource) {
+                log('⚠️ Ya hay una conexión activa');
+                return;
+            }
+
+            eventSource = new EventSource('http://localhost:8080/api/events');
+
+            eventSource.addEventListener('connected', (e) => {
+                const data = JSON.parse(e.data);
+                log(`✅ Conectado - Client ID: ${data.client_id}`, 'connected');
+                updateConnectionStatus(true);
+            });
+
+            eventSource.addEventListener('system_update', (e) => {
+                const system = JSON.parse(e.data);
+                log(`📊 System Update: ${system.name}`, 'system_update');
+                updateSystemCard(system);
+            });
+
+            eventSource.addEventListener('check_complete', (e) => {
+                const data = JSON.parse(e.data);
+                log(`✅ ${data.message}`, 'check_complete');
+            });
+
+            eventSource.onerror = (error) => {
+                log('❌ Error de conexión SSE', 'error');
+                console.error('SSE Error:', error);
+            };
+
+            document.getElementById('connect-btn').disabled = true;
+            document.getElementById('disconnect-btn').disabled = false;
+        }
+
+        function disconnectSSE() {
+            if (eventSource) {
+                eventSource.close();
+                eventSource = null;
+                log('🔌 Desconectado', 'disconnected');
+                updateConnectionStatus(false);
+                document.getElementById('connect-btn').disabled = false;
+                document.getElementById('disconnect-btn').disabled = true;
+            }
+        }
+
+        async function getCachedSystems() {
+            try {
+                const response = await fetch('http://localhost:8080/api/systems');
+                const data = await response.json();
+                log(`📦 Cache obtenido: ${data.count} sistemas`, 'cache');
+
+                data.systems.forEach(system => {
+                    updateSystemCard(system);
+                });
+            } catch (error) {
+                log('❌ Error al obtener cache: ' + error.message, 'error');
+            }
+        }
+
+        async function refreshAll() {
+            try {
+                const response = await fetch('http://localhost:8080/api/refresh', {
+                    method: 'POST'
+                });
+                const data = await response.json();
+                log(`🔄 ${data.message}`, 'refresh');
+            } catch (error) {
+                log('❌ Error al hacer refresh: ' + error.message, 'error');
+            }
+        }
+
+        function updateSystemCard(system) {
+            systems.set(system.id, system);
+
+            const container = document.getElementById('systems-container');
+            let card = document.getElementById(`system-${system.id}`);
+
+            if (!card) {
+                card = document.createElement('div');
+                card.id = `system-${system.id}`;
+                card.className = 'system-card';
+                container.appendChild(card);
+            }
+
+            const envBadge = system.environment === 'prod' ? 'prod' :
+                           system.environment === 'preprod' ? 'preprod' : 'shared';
+
+            card.innerHTML = `
+                <h3>
+                    ${system.name}
+                    <span class="badge ${envBadge}">${system.environment}</span>
+                </h3>
+                <div class="system-status ${system.status}">
+                    ${getStatusIcon(system.status)} ${system.status.toUpperCase()}
+                </div>
+                <div class="checks">
+                    ${system.checks.map(check => `
+                        <div class="check ${check.status}">
+                            <strong>${check.name}:</strong> ${check.message}
+                            ${check.response_time_ms ? `<br><small>⏱️ ${check.response_time_ms}ms</small>` : ''}
+                        </div>
+                    `).join('')}
+                </div>
+            `;
+        }
+
+        function getStatusIcon(status) {
+            switch(status) {
+                case 'online': return '✅';
+                case 'warning': return '⚠️';
+                case 'error': return '❌';
+                default: return '❓';
+            }
+        }
+
+        function updateConnectionStatus(connected) {
+            const statusEl = document.getElementById('connection-status');
+            if (connected) {
+                statusEl.textContent = 'Conectado';
+                statusEl.className = 'status connected';
+            } else {
+                statusEl.textContent = 'Desconectado';
+                statusEl.className = 'status disconnected';
+            }
+        }
+
+        function log(message, eventType = 'info') {
+            const logDiv = document.getElementById('events-log');
+            const time = new Date().toLocaleTimeString();
+            const eventLine = document.createElement('div');
+            eventLine.className = 'event-line';
+            eventLine.innerHTML = `<span style="color: #858585">[${time}]</span> <span class="event-type">${eventType}</span>: ${message}`;
+            logDiv.appendChild(eventLine);
+            logDiv.scrollTop = logDiv.scrollHeight;
+        }
+
+        // Auto-conectar al cargar
+        window.addEventListener('load', () => {
+            log('🚀 Página cargada. Listo para conectar.', 'init');
+        });
+    </script>
+</body>
+</html>

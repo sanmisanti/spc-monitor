@@ -507,10 +507,182 @@ APPSALTACOMPRA_SKIP_SSL_VERIFICATION=true
 - `./credentials/service-account.json`: Service Account de Google (gitignored)
 - Usuario SQL: `readOnlyUser` con permisos SELECT en msdb.dbo.sysmail_mailitems
 
+### Decisiones de Implementación: Arquitectura de Cache + SSE + Background Worker
+
+**Requisito:** Minimizar impacto en bases de datos de producción y proporcionar updates en tiempo real al frontend sin esperas largas.
+
+**Problema identificado:**
+- Ejecutar checks síncronos en cada petición HTTP causaría timeouts y carga excesiva en BD
+- No se puede esperar 5-10 segundos por respuesta en cada request
+- Necesidad de updates progresivos en UI (no esperar a que todos los checks terminen)
+
+**Solución implementada:**
+
+#### 1. **Sistema de Cache Thread-Safe** (`internal/cache/system_cache.go`)
+
+Cache en memoria con sincronización para almacenar estado de sistemas:
+
+```go
+type SystemCache struct {
+    mu      sync.RWMutex
+    systems map[string]CachedSystem
+}
+
+type CachedSystem struct {
+    Data      models.System
+    UpdatedAt time.Time
+}
+```
+
+**Métodos:**
+- `Get(id)`: Obtiene un sistema del cache
+- `Set(id, system)`: Actualiza un sistema en el cache
+- `GetAll()`: Retorna todos los sistemas cacheados
+- `IsStale(id, maxAge)`: Verifica si un sistema está desactualizado
+- Thread-safe con `sync.RWMutex` para lectura/escritura concurrente
+
+#### 2. **Broadcaster SSE** (`internal/sse/broadcaster.go`)
+
+Sistema de Server-Sent Events para enviar updates en tiempo real al frontend:
+
+```go
+type Broadcaster struct {
+    mu      sync.RWMutex
+    clients map[string]*Client
+}
+```
+
+**Eventos SSE:**
+- `connected`: Cliente conectado (con client_id)
+- `system_update`: Actualización de un sistema específico
+- `check_complete`: Todos los checks completaron
+
+**Características:**
+- Múltiples clientes simultáneos
+- Broadcast selectivo por evento
+- Buffer de 10 mensajes por cliente
+- Auto-cleanup al desconectar
+
+#### 3. **Smart Background Worker** (`internal/scheduler/smart_worker.go`)
+
+Worker inteligente que ejecuta checks periódicamente con lógica de pausa:
+
+```go
+type SmartWorker struct {
+    interval        time.Duration  // Intervalo entre checks
+    idleTimeout     time.Duration  // Timeout para pausar si no hay actividad
+    lastActivity    time.Time      // Última request recibida
+}
+```
+
+**Comportamiento:**
+- Ejecuta checks cada **30 minutos** (configurable)
+- Se **pausa automáticamente** si no hay actividad por **60 minutos**
+- Se **reactiva** cuando llega una nueva request
+- Actualiza cache y envía eventos SSE al completar checks
+
+**Ventajas:**
+- Minimiza carga en BD de producción (solo checks cada 30 min)
+- Ahorra recursos cuando nadie usa el dashboard
+- Datos siempre frescos si hay usuarios activos
+
+#### 4. **Endpoints API Refactorizados**
+
+**GET `/api/systems`** - Lectura instantánea del cache:
+```go
+// Responde en <10ms, siempre disponible
+// Retorna: {"systems": [...], "cached": true, "count": 5}
+```
+
+**GET `/api/events`** - Stream SSE para updates en tiempo real:
+```go
+// Conexión persistente HTTP
+// Recibe eventos conforme se actualizan sistemas
+// event: system_update → Datos de un sistema
+// event: check_complete → Todos los checks terminaron
+```
+
+**POST `/api/refresh`** - Refresh manual de todos los sistemas:
+```go
+// Responde 202 Accepted inmediatamente
+// Ejecuta checks en background
+// Envía updates vía SSE conforme completan
+```
+
+**POST `/api/systems/:id/refresh`** - Refresh de sistema individual:
+```go
+// Responde 202 Accepted inmediatamente
+// Ejecuta check del sistema específico
+// Envía update vía SSE al completar
+```
+
+#### 5. **Broadcasting Progresivo**
+
+Cada check envía evento SSE **inmediatamente al completar** (no espera a los demás):
+
+```go
+func checkAllSystemsWithProgressiveBroadcast() {
+    // Ejecuta 5 checks en paralelo
+    go func() {
+        system := checkSaltaCompraProd()
+        cache.Set(system.ID, system)
+        broadcaster.BroadcastSystem(system)  // ← Envío inmediato
+    }()
+    // ... otros 4 sistemas en paralelo
+}
+```
+
+**Resultado:** Frontend ve sistemas aparecer progresivamente (1-2 segundos de diferencia), no todos juntos.
+
+#### 6. **Middleware CORS**
+
+Headers CORS configurados para permitir consumo desde frontend:
+```go
+Access-Control-Allow-Origin: *
+Access-Control-Allow-Methods: GET, POST, OPTIONS
+Access-Control-Allow-Headers: Content-Type
+```
+
+#### 7. **Configuración**
+
+Variables de entorno agregadas:
+```bash
+# Background Worker
+BACKGROUND_CHECK_INTERVAL_MINUTES=30  # Checks automáticos cada 30 min
+WORKER_IDLE_TIMEOUT_MINUTES=60        # Pausar si idle por 60 min
+CACHE_MAX_AGE_MINUTES=35              # Validez de datos en cache
+```
+
+**Ventajas de esta arquitectura:**
+- ✅ **Respuesta instantánea**: API responde en <10ms (cache)
+- ✅ **Updates en tiempo real**: SSE envía datos conforme se obtienen
+- ✅ **Mínimo impacto en BD**: Solo checks cada 30 min (si hay actividad)
+- ✅ **Escalable**: Soporta múltiples clientes SSE simultáneos
+- ✅ **Eficiente**: Worker se pausa cuando no se usa
+- ✅ **Progresivo**: UI ve sistemas aparecer uno por uno
+- ✅ **Asíncrono**: Refresh manual no bloquea (202 Accepted)
+
+**Flujo completo:**
+```
+1. Usuario abre dashboard
+   → GET /api/systems (responde cache instantáneo)
+   → EventSource('/api/events') (abre SSE)
+
+2. Si cache vacío/viejo
+   → POST /api/refresh (dispara checks)
+   → Backend ejecuta checks en paralelo
+   → Cada check envía SSE al completar
+   → Frontend actualiza UI progresivamente
+
+3. Background worker (cada 30 min)
+   → Si hay actividad reciente, ejecuta checks
+   → Actualiza cache
+   → Envía eventos SSE a clientes conectados
+   → Si idle >60 min, se pausa
+```
+
 ### Pendiente
 - Frontend React + Vite
-- Jobs automáticos periódicos (scheduler)
-- WebSocket para updates en tiempo real
 - Autenticación y seguridad
 
 ## Desarrollo y Testing

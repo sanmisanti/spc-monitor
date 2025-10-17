@@ -2,39 +2,205 @@ package api
 
 import (
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
+	"strings"
 	"sync"
+	"time"
 
+	"github.com/saltacompra/monitor/internal/cache"
 	"github.com/saltacompra/monitor/internal/config"
 	"github.com/saltacompra/monitor/internal/models"
 	"github.com/saltacompra/monitor/internal/monitors"
+	"github.com/saltacompra/monitor/internal/sse"
 )
 
 // Handler maneja las peticiones HTTP
 type Handler struct {
-	config config.Config
+	config      config.Config
+	cache       *cache.SystemCache
+	broadcaster *sse.Broadcaster
 }
 
 // NewHandler crea un nuevo handler
-func NewHandler(cfg config.Config) *Handler {
-	return &Handler{config: cfg}
+func NewHandler(cfg config.Config, cache *cache.SystemCache, broadcaster *sse.Broadcaster) *Handler {
+	return &Handler{
+		config:      cfg,
+		cache:       cache,
+		broadcaster: broadcaster,
+	}
 }
 
-// GetSystems devuelve el estado de todos los sistemas monitoreados
+// GetSystems devuelve el estado de todos los sistemas desde el cache
 func (h *Handler) GetSystems(w http.ResponseWriter, r *http.Request) {
-	log.Printf("[API] Ejecutando checks de sistemas...")
+	systems := h.cache.GetAll()
 
-	// Ejecutar todos los checks en paralelo
+	response := map[string]interface{}{
+		"systems": systems,
+		"cached":  true,
+		"count":   len(systems),
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(response)
+}
+
+// GetEvents maneja la conexión SSE para enviar updates en tiempo real
+func (h *Handler) GetEvents(w http.ResponseWriter, r *http.Request) {
+	// Headers para SSE
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+
+	// Generar ID de cliente único
+	clientID := fmt.Sprintf("client_%d", time.Now().UnixNano())
+
+	// Registrar cliente
+	client := h.broadcaster.Register(clientID)
+	defer h.broadcaster.Unregister(clientID)
+
+	// Enviar mensaje de bienvenida
+	fmt.Fprintf(w, "event: connected\ndata: {\"client_id\": \"%s\"}\n\n", clientID)
+	w.(http.Flusher).Flush()
+
+	// Escuchar mensajes del broadcaster
+	for {
+		select {
+		case message, ok := <-client.Channel:
+			if !ok {
+				return
+			}
+			fmt.Fprint(w, message)
+			w.(http.Flusher).Flush()
+		case <-r.Context().Done():
+			return
+		}
+	}
+}
+
+// RefreshAllSystems dispara la ejecución de todos los checks (async)
+func (h *Handler) RefreshAllSystems(w http.ResponseWriter, r *http.Request) {
+	log.Println("[API] Refresh manual solicitado para todos los sistemas")
+
+	// Ejecutar checks en background con broadcasts progresivos
+	go func() {
+		h.checkAllSystemsWithProgressiveBroadcast()
+	}()
+
+	// Responder inmediatamente
+	w.WriteHeader(http.StatusAccepted)
+	response := map[string]interface{}{
+		"message": "Refresh iniciado",
+		"status":  "processing",
+	}
+	json.NewEncoder(w).Encode(response)
+}
+
+// RefreshSystem dispara la ejecución de check de un sistema específico (async)
+func (h *Handler) RefreshSystem(w http.ResponseWriter, r *http.Request) {
+	// Extraer ID del sistema de la URL
+	path := r.URL.Path
+	parts := strings.Split(strings.TrimPrefix(path, "/api/systems/"), "/")
+	if len(parts) == 0 || parts[0] == "" {
+		http.Error(w, "ID de sistema no especificado", http.StatusBadRequest)
+		return
+	}
+	systemID := parts[0]
+
+	log.Printf("[API] Refresh manual solicitado para sistema: %s", systemID)
+
+	// Ejecutar check en background
+	go func() {
+		system := h.checkSystemByID(systemID)
+		if system.ID != "" {
+			h.cache.Set(system.ID, system)
+			h.broadcaster.BroadcastSystem(system)
+			log.Printf("[API] Refresh manual completado: %s", systemID)
+		} else {
+			log.Printf("[API] Sistema no encontrado: %s", systemID)
+		}
+	}()
+
+	// Responder inmediatamente
+	w.WriteHeader(http.StatusAccepted)
+	response := map[string]interface{}{
+		"message":   "Refresh iniciado",
+		"system_id": systemID,
+		"status":    "processing",
+	}
+	json.NewEncoder(w).Encode(response)
+}
+
+// CheckAllSystems ejecuta todos los checks en paralelo y retorna los sistemas
+// Este método se usa desde el worker (sin broadcasts)
+func (h *Handler) CheckAllSystems() []models.System {
 	var wg sync.WaitGroup
+	systemsChan := make(chan models.System, 5)
+
+	// Sistema 1: SaltaCompra Producción
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		systemsChan <- h.checkSaltaCompraProd()
+	}()
+
+	// Sistema 2: SaltaCompra Preproducción
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		systemsChan <- h.checkSaltaCompraPreProd()
+	}()
+
+	// Sistema 3: Infraestructura Compartida
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		systemsChan <- h.checkInfrastructure()
+	}()
+
+	// Sistema 4: Google Sheets - Kairos
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		systemsChan <- h.checkGoogleSheetsKairos()
+	}()
+
+	// Sistema 5: App.SaltaCompra
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		systemsChan <- h.checkAppSaltaCompra()
+	}()
+
+	// Esperar a que terminen y cerrar canal
+	go func() {
+		wg.Wait()
+		close(systemsChan)
+	}()
+
+	// Recolectar resultados
 	systems := []models.System{}
+	for system := range systemsChan {
+		systems = append(systems, system)
+	}
+
+	return systems
+}
+
+// checkAllSystemsWithProgressiveBroadcast ejecuta checks en paralelo y envía SSE conforme completan
+func (h *Handler) checkAllSystemsWithProgressiveBroadcast() {
+	var wg sync.WaitGroup
 
 	// Sistema 1: SaltaCompra Producción
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
 		system := h.checkSaltaCompraProd()
-		systems = append(systems, system)
+		h.cache.Set(system.ID, system)
+		h.broadcaster.BroadcastSystem(system)
+		log.Printf("[API] Sistema actualizado: %s", system.Name)
 	}()
 
 	// Sistema 2: SaltaCompra Preproducción
@@ -42,7 +208,9 @@ func (h *Handler) GetSystems(w http.ResponseWriter, r *http.Request) {
 	go func() {
 		defer wg.Done()
 		system := h.checkSaltaCompraPreProd()
-		systems = append(systems, system)
+		h.cache.Set(system.ID, system)
+		h.broadcaster.BroadcastSystem(system)
+		log.Printf("[API] Sistema actualizado: %s", system.Name)
 	}()
 
 	// Sistema 3: Infraestructura Compartida
@@ -50,7 +218,9 @@ func (h *Handler) GetSystems(w http.ResponseWriter, r *http.Request) {
 	go func() {
 		defer wg.Done()
 		system := h.checkInfrastructure()
-		systems = append(systems, system)
+		h.cache.Set(system.ID, system)
+		h.broadcaster.BroadcastSystem(system)
+		log.Printf("[API] Sistema actualizado: %s", system.Name)
 	}()
 
 	// Sistema 4: Google Sheets - Kairos
@@ -58,7 +228,9 @@ func (h *Handler) GetSystems(w http.ResponseWriter, r *http.Request) {
 	go func() {
 		defer wg.Done()
 		system := h.checkGoogleSheetsKairos()
-		systems = append(systems, system)
+		h.cache.Set(system.ID, system)
+		h.broadcaster.BroadcastSystem(system)
+		log.Printf("[API] Sistema actualizado: %s", system.Name)
 	}()
 
 	// Sistema 5: App.SaltaCompra
@@ -66,20 +238,35 @@ func (h *Handler) GetSystems(w http.ResponseWriter, r *http.Request) {
 	go func() {
 		defer wg.Done()
 		system := h.checkAppSaltaCompra()
-		systems = append(systems, system)
+		h.cache.Set(system.ID, system)
+		h.broadcaster.BroadcastSystem(system)
+		log.Printf("[API] Sistema actualizado: %s", system.Name)
 	}()
 
+	// Esperar a que todos terminen
 	wg.Wait()
 
-	log.Printf("[API] Checks completados. Sistemas verificados: %d", len(systems))
+	h.broadcaster.BroadcastCheckComplete()
+	log.Println("[API] Todos los checks completados")
+}
 
-	// Responder con JSON
-	response := map[string]interface{}{
-		"systems": systems,
+// checkSystemByID ejecuta el check de un sistema específico por ID
+func (h *Handler) checkSystemByID(id string) models.System {
+	switch id {
+	case "saltacompra-prod":
+		return h.checkSaltaCompraProd()
+	case "saltacompra-preprod":
+		return h.checkSaltaCompraPreProd()
+	case "infrastructure":
+		return h.checkInfrastructure()
+	case "google-sheets-kairos":
+		return h.checkGoogleSheetsKairos()
+	case "app-saltacompra":
+		return h.checkAppSaltaCompra()
+	default:
+		log.Printf("[API] Sistema no encontrado: %s", id)
+		return models.System{}
 	}
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(response)
 }
 
 // checkSaltaCompraProd verifica el estado de SaltaCompra Producción
