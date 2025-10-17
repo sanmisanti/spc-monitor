@@ -85,13 +85,13 @@ func readResponseBody(resp *http.Response) (string, error) {
 	return string(bodyBytes), nil
 }
 
-// getHTTPClient retorna un cliente HTTP configurado con timeouts
-func getHTTPClient(timeoutSeconds int) *http.Client {
+// getHTTPClient retorna un cliente HTTP configurado con timeouts y opciones SSL
+func getHTTPClient(timeoutSeconds int, skipSSLVerify bool) *http.Client {
 	return &http.Client{
 		Timeout: time.Duration(timeoutSeconds) * time.Second,
 		Transport: &http.Transport{
 			TLSClientConfig: &tls.Config{
-				InsecureSkipVerify: false, // Validar certificados
+				InsecureSkipVerify: skipSSLVerify, // Configurable según necesidad
 			},
 		},
 	}

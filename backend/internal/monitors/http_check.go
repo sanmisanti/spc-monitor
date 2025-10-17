@@ -9,15 +9,16 @@ import (
 
 // HTTPCheckConfig contiene la configuración para verificaciones HTTP
 type HTTPCheckConfig struct {
-	URL              string
-	CheckID          string
-	CheckName        string
-	ExpectedContent  []string // Textos que deben estar presentes en el HTML
-	ValidateSSL      bool     // Si debe validar certificado SSL
-	SSLWarningDays   int      // Días antes de expiración para warning
-	TimeoutWarningMs int64    // Umbral de ms para warning
-	TimeoutErrorMs   int64    // Umbral de ms para error
-	TimeoutSeconds   int      // Timeout de la petición HTTP
+	URL                  string
+	CheckID              string
+	CheckName            string
+	ExpectedContent      []string // Textos que deben estar presentes en el HTML
+	ValidateSSL          bool     // Si debe validar certificado SSL
+	SkipSSLVerification  bool     // Saltar verificación SSL (para certificados autofirmados)
+	SSLWarningDays       int      // Días antes de expiración para warning
+	TimeoutWarningMs     int64    // Umbral de ms para warning
+	TimeoutErrorMs       int64    // Umbral de ms para error
+	TimeoutSeconds       int      // Timeout de la petición HTTP
 }
 
 // CheckHTTP verifica si una URL responde correctamente con validaciones completas
@@ -35,7 +36,7 @@ func CheckHTTP(config HTTPCheckConfig) models.Check {
 	if timeout == 0 {
 		timeout = 30 // Default 30 segundos
 	}
-	client := getHTTPClient(timeout)
+	client := getHTTPClient(timeout, config.SkipSSLVerification)
 
 	// Realizar petición HTTP
 	start := time.Now()
@@ -96,8 +97,8 @@ func CheckHTTP(config HTTPCheckConfig) models.Check {
 		}
 	}
 
-	// 4. Verificar SSL
-	if config.ValidateSSL {
+	// 4. Verificar SSL (solo si no se saltea la verificación)
+	if config.ValidateSSL && !config.SkipSSLVerification {
 		sslStatus, sslMsg, daysRemaining := validateSSLCertificate(config.URL, config.SSLWarningDays)
 		check.Metadata["ssl_status"] = sslStatus
 		check.Metadata["ssl_days_remaining"] = daysRemaining
@@ -111,6 +112,10 @@ func CheckHTTP(config HTTPCheckConfig) models.Check {
 				worstStatus = "warning"
 			}
 		}
+	} else if config.SkipSSLVerification {
+		// Si se saltea verificación SSL, marcar explícitamente
+		check.Metadata["ssl_status"] = "skipped"
+		check.Metadata["ssl_verification_skipped"] = true
 	}
 
 	// Construir mensaje final

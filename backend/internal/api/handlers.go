@@ -109,14 +109,14 @@ func (h *Handler) checkSaltaCompraProd() models.System {
 
 	// Check servicio de mails
 	mailConfig := monitors.MailCheckConfig{
-		Host:                     h.config.DatabaseProd.Host,
-		Port:                     h.config.DatabaseProd.Port,
-		User:                     h.config.DatabaseProd.User,
-		Password:                 h.config.DatabaseProd.Password,
-		Database:                 h.config.DatabaseProd.Database,
-		MaxMinutesWithoutSending: h.config.Monitors.MailMaxMinutesWithoutSending,
-		MaxFailedCount:           h.config.Monitors.MailMaxFailedCount,
-		MaxUnsentCount:           h.config.Monitors.MailMaxUnsentCount,
+		Host:                      h.config.DatabaseProd.Host,
+		Port:                      h.config.DatabaseProd.Port,
+		User:                      h.config.DatabaseProd.User,
+		Password:                  h.config.DatabaseProd.Password,
+		Database:                  h.config.DatabaseProd.Database,
+		MaxMinutesWithoutSent:     h.config.Monitors.MailMaxMinutesWithoutSent,
+		DailyWarningFailedPercent: h.config.Monitors.MailDailyWarningFailedPercent,
+		DailyErrorFailedPercent:   h.config.Monitors.MailDailyErrorFailedPercent,
 	}
 	mailCheck := monitors.CheckMailService(mailConfig, "mail-service", "Servicio de correos")
 	system.Checks = append(system.Checks, mailCheck)
@@ -157,14 +157,14 @@ func (h *Handler) checkSaltaCompraPreProd() models.System {
 
 	// Check servicio de mails
 	mailConfig := monitors.MailCheckConfig{
-		Host:                     h.config.DatabasePreProd.Host,
-		Port:                     h.config.DatabasePreProd.Port,
-		User:                     h.config.DatabasePreProd.User,
-		Password:                 h.config.DatabasePreProd.Password,
-		Database:                 h.config.DatabasePreProd.Database,
-		MaxMinutesWithoutSending: h.config.Monitors.MailMaxMinutesWithoutSending,
-		MaxFailedCount:           h.config.Monitors.MailMaxFailedCount,
-		MaxUnsentCount:           h.config.Monitors.MailMaxUnsentCount,
+		Host:                      h.config.DatabasePreProd.Host,
+		Port:                      h.config.DatabasePreProd.Port,
+		User:                      h.config.DatabasePreProd.User,
+		Password:                  h.config.DatabasePreProd.Password,
+		Database:                  h.config.DatabasePreProd.Database,
+		MaxMinutesWithoutSent:     h.config.Monitors.MailMaxMinutesWithoutSent,
+		DailyWarningFailedPercent: h.config.Monitors.MailDailyWarningFailedPercent,
+		DailyErrorFailedPercent:   h.config.Monitors.MailDailyErrorFailedPercent,
 	}
 	mailCheck := monitors.CheckMailService(mailConfig, "mail-service", "Servicio de correos")
 	system.Checks = append(system.Checks, mailCheck)
@@ -258,15 +258,16 @@ func (h *Handler) checkAppSaltaCompra() models.System {
 
 	// Check HTTP (público)
 	httpCheck := monitors.CheckHTTP(monitors.HTTPCheckConfig{
-		URL:              h.config.AppSaltaCompra.URL,
-		CheckID:          "http-check",
-		CheckName:        "Sitio web accesible",
-		ExpectedContent:  []string{h.config.AppSaltaCompra.ExpectedContent},
-		ValidateSSL:      true,
-		SSLWarningDays:   h.config.Monitors.SSLWarningDays,
-		TimeoutWarningMs: h.config.Monitors.HTTPTimeoutWarningMs,
-		TimeoutErrorMs:   h.config.Monitors.HTTPTimeoutErrorMs,
-		TimeoutSeconds:   h.config.Monitors.HTTPTimeoutSeconds,
+		URL:                  h.config.AppSaltaCompra.URL,
+		CheckID:              "http-check",
+		CheckName:            "Sitio web accesible",
+		ExpectedContent:      []string{h.config.AppSaltaCompra.ExpectedContent},
+		ValidateSSL:          true,
+		SkipSSLVerification:  h.config.AppSaltaCompra.SkipSSLVerification,
+		SSLWarningDays:       h.config.Monitors.SSLWarningDays,
+		TimeoutWarningMs:     h.config.Monitors.HTTPTimeoutWarningMs,
+		TimeoutErrorMs:       h.config.Monitors.HTTPTimeoutErrorMs,
+		TimeoutSeconds:       h.config.Monitors.HTTPTimeoutSeconds,
 	})
 	system.Checks = append(system.Checks, httpCheck)
 

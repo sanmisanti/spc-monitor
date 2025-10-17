@@ -230,6 +230,44 @@ END as sent_status
 
 **Tabla correcta:** `msdb.dbo.sysmail_mailitems` (no `sysmail_allitems` que es una vista diferente)
 
+---
+
+**ACTUALIZACIÓN: Análisis Diario Completo**
+
+El check original solo analizaba los últimos 10 correos, lo cual era limitado para tener visibilidad real del servicio.
+
+**Cambios implementados:**
+
+1. **Análisis de todos los correos del día:**
+   - Query filtra por `send_request_date = HOY` (con fallback a `last_mod_date`)
+   - Procesa **todos** los registros del día
+
+2. **Nuevas métricas:**
+   - `today_total`, `today_sent`, `today_unsent`, `today_failed`, `today_retrying`
+   - `today_failed_percentage`: Porcentaje de fallidos
+   - `minutes_since_last_sent`: Tiempo desde último envío exitoso
+   - `minutes_since_last_created`: Tiempo desde último registro agregado
+   - `last_sent_time`, `last_created_time`: Timestamps precisos
+
+3. **Sistema de alertas mejorado:**
+   - **Error**: % fallidos >= umbral crítico (30%)
+   - **Warning**: % fallidos >= umbral warning (10%)
+   - **Warning**: Sin correos 'sent' en X horas (4 horas)
+   - **OK**: Funcionamiento normal
+
+**Configuración:**
+```bash
+MAIL_MAX_MINUTES_WITHOUT_SENT=240        # 4 horas
+MAIL_DAILY_WARNING_FAILED_PERCENT=10     # 10%
+MAIL_DAILY_ERROR_FAILED_PERCENT=30       # 30%
+```
+
+**Ventajas:**
+- Visibilidad completa de actividad diaria
+- Alertas proporcionales al volumen de correos
+- Métricas temporales precisas
+- Escalable a cualquier volumen
+
 ### Decisiones de Implementación: Check de Google Sheets (Kairos)
 
 **Requisito:** Monitorear que la hoja "Log Actualizaciones Kairos" tenga un registro del día actual con la base de datos correcta.
@@ -346,7 +384,44 @@ END as sent_status
 - **Testing**: Fácil crear diferentes configuraciones para dev/staging/prod
 - **Extensibilidad**: Agregar más dominios o servicios RDAP sin cambios de código
 - **Reutilización**: Mismo código puede monitorear diferentes instancias
-- **Valores por defecto**: Config tiene fallbacks para facilitar desarrollo
+
+### Decisiones de Implementación: Manejo de Certificados SSL Autofirmados
+
+**Problema identificado:** App.SaltaCompra usa certificado SSL autofirmado/CA privada, causando errores de verificación: `tls: failed to verify certificate: x509: certificate signed by unknown authority`
+
+**Solución implementada:**
+
+1. **Parámetro configurable `SkipSSLVerification`:**
+   - Nuevo campo en `HTTPCheckConfig` para controlar verificación SSL por sistema
+   - Configuración vía variable de entorno `APPSALTACOMPRA_SKIP_SSL_VERIFICATION`
+   - Cuando está activo (`true`), el cliente HTTP usa `InsecureSkipVerify: true`
+
+2. **Lógica de validación adaptativa:**
+   - Si `SkipSSLVerification` está activo:
+     - Cliente HTTP acepta cualquier certificado
+     - No se ejecuta `validateSSLCertificate()` (que haría su propia petición HTTP con validación estricta)
+     - Metadata incluye `"ssl_status": "skipped"` y `"ssl_verification_skipped": true`
+   - Si está desactivado (comportamiento normal):
+     - Cliente HTTP valida certificados contra CAs públicas
+     - Se ejecuta validación SSL completa con cálculo de días hasta expiración
+
+3. **Implementación técnica:**
+   - `http_helpers.go`: `getHTTPClient(timeout, skipSSLVerify)` configura `TLSClientConfig` dinámicamente
+   - `http_check.go`: Condicional `if ValidateSSL && !SkipSSLVerification` para ejecutar validación SSL
+   - `config.go`: Nueva función `mustGetEnvAsBool()` para parsear booleanos desde `.env`
+   - `handlers.go`: Pasa `SkipSSLVerification` desde configuración al check HTTP
+
+**Ventajas:**
+- **Selectivo por sistema**: Solo App.SaltaCompra saltea verificación, otros sistemas mantienen validación estricta
+- **Seguridad**: Falla si variable no existe en `.env` (validación estricta por defecto)
+- **Metadata transparente**: Indica explícitamente cuando verificación SSL fue salteada
+- **Extensible**: Mismo patrón puede aplicarse a otros sistemas con certificados autofirmados
+
+**Configuración:**
+```bash
+# .env
+APPSALTACOMPRA_SKIP_SSL_VERIFICATION=true
+```
 
 ## Estado del Proyecto
 
@@ -390,6 +465,11 @@ END as sent_status
   - VPN check host y timeout configurables
   - Umbrales y parámetros de checks configurables
   - Archivo `.env.example` como template
+  - Validación estricta sin fallbacks (fail-fast)
+- ✅ Manejo de certificados SSL autofirmados/CA privadas
+  - Configuración selectiva por sistema vía `SkipSSLVerification`
+  - App.SaltaCompra configurado para aceptar certificados autofirmados
+  - Metadata transparente cuando verificación SSL es salteada
 - ✅ Servidor HTTP funcional
 
 ### Configuración
@@ -432,7 +512,35 @@ END as sent_status
 - Jobs automáticos periódicos (scheduler)
 - WebSocket para updates en tiempo real
 - Autenticación y seguridad
-- Manejo de certificados SSL autofirmados/CA privadas
+
+## Desarrollo y Testing
+
+### Ejecución en Desarrollo
+
+**IMPORTANTE**: Durante el desarrollo, siempre ejecutar el servidor con `go run` en lugar de compilar:
+
+```bash
+cd backend
+go run ./cmd/server/main.go
+```
+
+**Razones:**
+- Cambios se reflejan inmediatamente sin necesidad de compilar
+- Más rápido para iterar durante desarrollo
+- Evita tener binarios desactualizados
+- Facilita el debugging
+
+**Nota**: La compilación (`go build`) solo debe usarse para preparar el binario de producción o cuando se requiera específicamente.
+
+### Validación de Configuración
+
+El servidor implementa validación estricta de configuración:
+- **Archivo `.env` obligatorio**: Si no existe, el servidor falla inmediatamente
+- **Variables requeridas**: Todas las variables de configuración son obligatorias
+- **Sin fallbacks**: No hay valores por defecto, se debe configurar explícitamente cada variable
+- **Fail-fast**: El servidor no arranca si falta alguna configuración crítica
+
+Si el servidor no arranca, revisar los mensajes de error que indicarán exactamente qué variable falta.
 
 ## Notas Técnicas
 

@@ -33,6 +33,7 @@
 - [x] Chequear estado de mails en preproducción
 - [ ] Agregar complejidad al análisis de estado de mails (verificar por tipo de correo)
 - [ ] Mostrar información detallada del último correo enviado (remitente, destinatario, asunto, last_mod_date, sent_date, sent_status)
+- [ ] Comprobar qué está pasando con el certificado SSL de app.saltacompra
 
 ### Frontend
 - [ ]

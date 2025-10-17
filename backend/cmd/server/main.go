@@ -10,13 +10,16 @@ import (
 )
 
 func main() {
-	// Cargar archivo .env (desde el directorio raíz del proyecto)
-	if err := godotenv.Load("../.env"); err != nil {
-		log.Println("No se pudo cargar .env, usando variables de entorno del sistema")
+	// Cargar archivo .env (ejecutar desde backend/)
+	if err := godotenv.Load(".env"); err != nil {
+		log.Fatal("ERROR CRÍTICO: No se pudo cargar el archivo .env - ", err)
 	}
 
 	// Cargar configuración desde variables de entorno
-	cfg := config.LoadConfig()
+	cfg, err := config.LoadConfig()
+	if err != nil {
+		log.Fatal("ERROR CRÍTICO: Configuración inválida - ", err)
+	}
 
 	// Crear handler
 	handler := api.NewHandler(cfg)

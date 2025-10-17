@@ -1,8 +1,10 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"strconv"
+	"strings"
 )
 
 // Config contiene toda la configuración de la aplicación
@@ -71,8 +73,9 @@ type PostgreSQLConfig struct {
 
 // AppSaltaCompraConfig configuración para monitoreo de App.SaltaCompra
 type AppSaltaCompraConfig struct {
-	URL             string
-	ExpectedContent string
+	URL                 string
+	ExpectedContent     string
+	SkipSSLVerification bool // true para certificados autofirmados/CA privada
 }
 
 // VPNCheckConfig configuración para verificación de VPN
@@ -83,9 +86,9 @@ type VPNCheckConfig struct {
 
 // MonitorsConfig configuración de umbrales para monitores
 type MonitorsConfig struct {
-	MailMaxMinutesWithoutSending int   // Minutos máximos sin enviar mails antes de warning
-	MailMaxFailedCount           int   // Cantidad máxima de mails fallidos antes de error
-	MailMaxUnsentCount           int   // Cantidad máxima de mails unsent antes de warning (cola atascada)
+	MailMaxMinutesWithoutSent    int   // Minutos máximos sin correo 'sent' antes de warning
+	MailDailyWarningFailedPercent int   // % de fallidos del día para warning
+	MailDailyErrorFailedPercent   int   // % de fallidos del día para error
 	HTTPTimeoutWarningMs         int64 // Umbral de ms para warning en checks HTTP
 	HTTPTimeoutErrorMs           int64 // Umbral de ms para error en checks HTTP
 	SSLWarningDays               int   // Días antes de expiración SSL para warning
@@ -95,93 +98,138 @@ type MonitorsConfig struct {
 }
 
 // LoadConfig carga la configuración desde variables de entorno
-func LoadConfig() Config {
-	return Config{
+// Retorna error si faltan variables requeridas o tienen valores inválidos
+func LoadConfig() (Config, error) {
+	var errors []string
+
+	// Validar variables requeridas
+	requiredVars := []string{
+		"SERVER_PORT",
+		"DB_PROD_HOST", "DB_PROD_PORT", "DB_PROD_USER", "DB_PROD_PASSWORD", "DB_PROD_NAME",
+		"DB_PREPROD_HOST", "DB_PREPROD_PORT", "DB_PREPROD_USER", "DB_PREPROD_PASSWORD", "DB_PREPROD_NAME",
+		"DB_APPSALTACOMPRA_HOST", "DB_APPSALTACOMPRA_PORT", "DB_APPSALTACOMPRA_USER", "DB_APPSALTACOMPRA_PASSWORD", "DB_APPSALTACOMPRA_NAME",
+		"SALTACOMPRA_PROD_URL", "SALTACOMPRA_PROD_EXPECTED_CONTENT",
+		"SALTACOMPRA_PREPROD_URL", "SALTACOMPRA_PREPROD_EXPECTED_CONTENT",
+		"APPSALTACOMPRA_URL", "APPSALTACOMPRA_EXPECTED_CONTENT", "APPSALTACOMPRA_SKIP_SSL_VERIFICATION",
+		"INFRASTRUCTURE_DOMAIN", "RDAP_BASE_URL",
+		"VPN_CHECK_HOST", "VPN_CHECK_TIMEOUT_MS",
+		"GSHEETS_SPREADSHEET_ID", "GSHEETS_SHEET_NAME", "GSHEETS_AUTH_METHOD",
+		"GSHEETS_CREDENTIALS_FILE", "GSHEETS_TIMESTAMP_COLUMN", "GSHEETS_FILENAME_COLUMN",
+		"GSHEETS_WARNING_DAYS", "GSHEETS_ERROR_DAYS",
+		"MAIL_MAX_MINUTES_WITHOUT_SENT", "MAIL_DAILY_WARNING_FAILED_PERCENT", "MAIL_DAILY_ERROR_FAILED_PERCENT",
+		"HTTP_TIMEOUT_WARNING_MS", "HTTP_TIMEOUT_ERROR_MS", "HTTP_TIMEOUT_SECONDS",
+		"SSL_WARNING_DAYS", "DOMAIN_WARNING_DAYS", "DOMAIN_ERROR_DAYS",
+	}
+
+	for _, v := range requiredVars {
+		if os.Getenv(v) == "" {
+			errors = append(errors, fmt.Sprintf("Variable requerida no encontrada: %s", v))
+		}
+	}
+
+	if len(errors) > 0 {
+		return Config{}, fmt.Errorf("Errores de configuración:\n- %s", strings.Join(errors, "\n- "))
+	}
+
+	// Cargar configuración
+	config := Config{
 		Server: ServerConfig{
-			Port: getEnv("SERVER_PORT", "8080"),
+			Port: mustGetEnv("SERVER_PORT"),
 		},
 		DatabaseProd: DatabaseConfig{
-			Host:     getEnv("DB_PROD_HOST", "localhost"),
-			Port:     getEnvAsInt("DB_PROD_PORT", 1433),
-			User:     getEnv("DB_PROD_USER", "sa"),
-			Password: getEnv("DB_PROD_PASSWORD", ""),
-			Database: getEnv("DB_PROD_NAME", "master"),
+			Host:     mustGetEnv("DB_PROD_HOST"),
+			Port:     mustGetEnvAsInt("DB_PROD_PORT"),
+			User:     mustGetEnv("DB_PROD_USER"),
+			Password: mustGetEnv("DB_PROD_PASSWORD"),
+			Database: mustGetEnv("DB_PROD_NAME"),
 		},
 		DatabasePreProd: DatabaseConfig{
-			Host:     getEnv("DB_PREPROD_HOST", "localhost"),
-			Port:     getEnvAsInt("DB_PREPROD_PORT", 1433),
-			User:     getEnv("DB_PREPROD_USER", "sa"),
-			Password: getEnv("DB_PREPROD_PASSWORD", ""),
-			Database: getEnv("DB_PREPROD_NAME", "master"),
+			Host:     mustGetEnv("DB_PREPROD_HOST"),
+			Port:     mustGetEnvAsInt("DB_PREPROD_PORT"),
+			User:     mustGetEnv("DB_PREPROD_USER"),
+			Password: mustGetEnv("DB_PREPROD_PASSWORD"),
+			Database: mustGetEnv("DB_PREPROD_NAME"),
 		},
 		GoogleSheets: GoogleSheetsConfig{
-			SpreadsheetID:   getEnv("GSHEETS_SPREADSHEET_ID", ""),
-			SheetName:       getEnv("GSHEETS_SHEET_NAME", "Log Actualizaciones Kairos"),
-			AuthMethod:      getEnv("GSHEETS_AUTH_METHOD", "service_account"),
-			CredentialsFile: getEnv("GSHEETS_CREDENTIALS_FILE", "./credentials/service-account.json"),
-			APIKey:          getEnv("GSHEETS_API_KEY", ""),
-			TimestampColumn: getEnvAsInt("GSHEETS_TIMESTAMP_COLUMN", 0),
-			FilenameColumn:  getEnvAsInt("GSHEETS_FILENAME_COLUMN", 2),
-			WarningDays:     getEnvAsInt("GSHEETS_WARNING_DAYS", 1),
-			ErrorDays:       getEnvAsInt("GSHEETS_ERROR_DAYS", 2),
+			SpreadsheetID:   mustGetEnv("GSHEETS_SPREADSHEET_ID"),
+			SheetName:       mustGetEnv("GSHEETS_SHEET_NAME"),
+			AuthMethod:      mustGetEnv("GSHEETS_AUTH_METHOD"),
+			CredentialsFile: mustGetEnv("GSHEETS_CREDENTIALS_FILE"),
+			APIKey:          os.Getenv("GSHEETS_API_KEY"), // Opcional
+			TimestampColumn: mustGetEnvAsInt("GSHEETS_TIMESTAMP_COLUMN"),
+			FilenameColumn:  mustGetEnvAsInt("GSHEETS_FILENAME_COLUMN"),
+			WarningDays:     mustGetEnvAsInt("GSHEETS_WARNING_DAYS"),
+			ErrorDays:       mustGetEnvAsInt("GSHEETS_ERROR_DAYS"),
 		},
 		SaltaCompra: SaltaCompraConfig{
-			ProdURL:                getEnv("SALTACOMPRA_PROD_URL", "https://saltacompra.gob.ar/"),
-			ProdExpectedContent:    getEnv("SALTACOMPRA_PROD_EXPECTED_CONTENT", "SALTA COMPRA - Portal de Compras Públicas de la Provincia de Salta"),
-			PreProdURL:             getEnv("SALTACOMPRA_PREPROD_URL", "https://preproduccion.saltacompra.gob.ar/"),
-			PreProdExpectedContent: getEnv("SALTACOMPRA_PREPROD_EXPECTED_CONTENT", "SALTA COMPRA - Portal de Compras Públicas de la Provincia de Salta"),
+			ProdURL:                mustGetEnv("SALTACOMPRA_PROD_URL"),
+			ProdExpectedContent:    mustGetEnv("SALTACOMPRA_PROD_EXPECTED_CONTENT"),
+			PreProdURL:             mustGetEnv("SALTACOMPRA_PREPROD_URL"),
+			PreProdExpectedContent: mustGetEnv("SALTACOMPRA_PREPROD_EXPECTED_CONTENT"),
 		},
 		Infrastructure: InfrastructureConfig{
-			Domain:      getEnv("INFRASTRUCTURE_DOMAIN", "saltacompra.gob.ar"),
-			RDAPBaseURL: getEnv("RDAP_BASE_URL", "https://rdap.nic.ar/domain/"),
+			Domain:      mustGetEnv("INFRASTRUCTURE_DOMAIN"),
+			RDAPBaseURL: mustGetEnv("RDAP_BASE_URL"),
 		},
 		PostgreSQLAppSPC: PostgreSQLConfig{
-			Host:     getEnv("DB_APPSALTACOMPRA_HOST", "localhost"),
-			Port:     getEnvAsInt("DB_APPSALTACOMPRA_PORT", 5432),
-			User:     getEnv("DB_APPSALTACOMPRA_USER", "postgres"),
-			Password: getEnv("DB_APPSALTACOMPRA_PASSWORD", ""),
-			Database: getEnv("DB_APPSALTACOMPRA_NAME", "postgres"),
+			Host:     mustGetEnv("DB_APPSALTACOMPRA_HOST"),
+			Port:     mustGetEnvAsInt("DB_APPSALTACOMPRA_PORT"),
+			User:     mustGetEnv("DB_APPSALTACOMPRA_USER"),
+			Password: mustGetEnv("DB_APPSALTACOMPRA_PASSWORD"),
+			Database: mustGetEnv("DB_APPSALTACOMPRA_NAME"),
 		},
 		AppSaltaCompra: AppSaltaCompraConfig{
-			URL:             getEnv("APPSALTACOMPRA_URL", "https://app.saltacompra.gob.ar/"),
-			ExpectedContent: getEnv("APPSALTACOMPRA_EXPECTED_CONTENT", "SALTACOMPRA"),
+			URL:                 mustGetEnv("APPSALTACOMPRA_URL"),
+			ExpectedContent:     mustGetEnv("APPSALTACOMPRA_EXPECTED_CONTENT"),
+			SkipSSLVerification: mustGetEnvAsBool("APPSALTACOMPRA_SKIP_SSL_VERIFICATION"),
 		},
 		VPNCheck: VPNCheckConfig{
-			Host:      getEnv("VPN_CHECK_HOST", ""),
-			TimeoutMs: getEnvAsInt("VPN_CHECK_TIMEOUT_MS", 2000),
+			Host:      mustGetEnv("VPN_CHECK_HOST"),
+			TimeoutMs: mustGetEnvAsInt("VPN_CHECK_TIMEOUT_MS"),
 		},
 		Monitors: MonitorsConfig{
-			MailMaxMinutesWithoutSending: getEnvAsInt("MAIL_MAX_MINUTES_WITHOUT_SENDING", 180),
-			MailMaxFailedCount:           getEnvAsInt("MAIL_MAX_FAILED_COUNT", 5),
-			MailMaxUnsentCount:           getEnvAsInt("MAIL_MAX_UNSENT_COUNT", 7),
-			HTTPTimeoutWarningMs:         int64(getEnvAsInt("HTTP_TIMEOUT_WARNING_MS", 3000)),
-			HTTPTimeoutErrorMs:           int64(getEnvAsInt("HTTP_TIMEOUT_ERROR_MS", 10000)),
-			SSLWarningDays:               getEnvAsInt("SSL_WARNING_DAYS", 30),
-			HTTPTimeoutSeconds:           getEnvAsInt("HTTP_TIMEOUT_SECONDS", 30),
-			DomainWarningDays:            getEnvAsInt("DOMAIN_WARNING_DAYS", 60),
-			DomainErrorDays:              getEnvAsInt("DOMAIN_ERROR_DAYS", 30),
+			MailMaxMinutesWithoutSent:    mustGetEnvAsInt("MAIL_MAX_MINUTES_WITHOUT_SENT"),
+			MailDailyWarningFailedPercent: mustGetEnvAsInt("MAIL_DAILY_WARNING_FAILED_PERCENT"),
+			MailDailyErrorFailedPercent:   mustGetEnvAsInt("MAIL_DAILY_ERROR_FAILED_PERCENT"),
+			HTTPTimeoutWarningMs:         int64(mustGetEnvAsInt("HTTP_TIMEOUT_WARNING_MS")),
+			HTTPTimeoutErrorMs:           int64(mustGetEnvAsInt("HTTP_TIMEOUT_ERROR_MS")),
+			SSLWarningDays:               mustGetEnvAsInt("SSL_WARNING_DAYS"),
+			HTTPTimeoutSeconds:           mustGetEnvAsInt("HTTP_TIMEOUT_SECONDS"),
+			DomainWarningDays:            mustGetEnvAsInt("DOMAIN_WARNING_DAYS"),
+			DomainErrorDays:              mustGetEnvAsInt("DOMAIN_ERROR_DAYS"),
 		},
 	}
+
+	return config, nil
 }
 
-// getEnv obtiene una variable de entorno o devuelve un valor por defecto
-func getEnv(key string, defaultValue string) string {
-	value := os.Getenv(key)
-	if value == "" {
-		return defaultValue
+// mustGetEnv obtiene una variable de entorno
+// Asume que la variable ya fue validada en LoadConfig
+func mustGetEnv(key string) string {
+	return os.Getenv(key)
+}
+
+// mustGetEnvAsInt obtiene una variable de entorno como int
+// Asume que la variable ya fue validada en LoadConfig
+// Panic si el valor no es un entero válido (esto indica un bug de configuración)
+func mustGetEnvAsInt(key string) int {
+	valueStr := os.Getenv(key)
+	value, err := strconv.Atoi(valueStr)
+	if err != nil {
+		// Esto no debería pasar si las validaciones se hicieron correctamente
+		panic(fmt.Sprintf("Variable %s contiene valor inválido: %s (debe ser un número entero)", key, valueStr))
 	}
 	return value
 }
 
-// getEnvAsInt obtiene una variable de entorno como int o devuelve un valor por defecto
-func getEnvAsInt(key string, defaultValue int) int {
+// mustGetEnvAsBool obtiene una variable de entorno como bool
+// Asume que la variable ya fue validada en LoadConfig
+// Panic si el valor no es un booleano válido (esto indica un bug de configuración)
+func mustGetEnvAsBool(key string) bool {
 	valueStr := os.Getenv(key)
-	if valueStr == "" {
-		return defaultValue
-	}
-	value, err := strconv.Atoi(valueStr)
+	value, err := strconv.ParseBool(valueStr)
 	if err != nil {
-		return defaultValue
+		panic(fmt.Sprintf("Variable %s contiene valor inválido: %s (debe ser true o false)", key, valueStr))
 	}
 	return value
 }
