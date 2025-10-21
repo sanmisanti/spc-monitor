@@ -10,6 +10,8 @@ interface UseSystemsReturn {
   cached: boolean;
   lastUpdate: Date | null;
   sseConnected: boolean;
+  refreshing: boolean;
+  refreshProgress: { updated: number; total: number };
   refreshAll: () => Promise<void>;
 }
 
@@ -23,15 +25,42 @@ export function useSystems(): UseSystemsReturn {
   const [error, setError] = useState<string | null>(null);
   const [cached, setCached] = useState(false);
   const [lastUpdate, setLastUpdate] = useState<Date | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
+  const [refreshProgress, setRefreshProgress] = useState({ updated: 0, total: 0 });
+  const [autoRefreshDone, setAutoRefreshDone] = useState(false);
 
   const { connected: sseConnected, connect: connectSSE } = useSSE();
 
   // Actualizar un sistema específico (desde SSE)
   const updateSystem = useCallback((updatedSystem: System) => {
     setSystems((prev) =>
-      prev.map((sys) => (sys.id === updatedSystem.id ? updatedSystem : sys))
+      prev.map((sys) =>
+        sys.id === updatedSystem.id
+          ? {
+              ...updatedSystem,
+              source: 'sse' as const,
+              localUpdatedAt: new Date(),
+            }
+          : sys
+      )
     );
     setLastUpdate(new Date());
+
+    // Incrementar progreso si hay refresh en curso
+    setRefreshProgress((prev) => {
+      if (prev.total > 0 && prev.updated < prev.total) {
+        const newUpdated = prev.updated + 1;
+        // Si completamos todos, resetear refreshing
+        if (newUpdated === prev.total) {
+          setTimeout(() => {
+            setRefreshing(false);
+            setRefreshProgress({ updated: 0, total: 0 });
+          }, 500); // Pequeño delay para que se vea el 100%
+        }
+        return { ...prev, updated: newUpdated };
+      }
+      return prev;
+    });
   }, []);
 
   // Carga inicial: obtener cache
@@ -41,7 +70,13 @@ export function useSystems(): UseSystemsReturn {
         setLoading(true);
         setError(null);
         const response = await getSystems();
-        setSystems(response.systems);
+        // Marcar todos los sistemas como 'cache' en carga inicial
+        const systemsWithSource = response.systems.map((sys) => ({
+          ...sys,
+          source: 'cache' as const,
+          localUpdatedAt: new Date(),
+        }));
+        setSystems(systemsWithSource);
         setCached(response.cached);
         setLastUpdate(new Date());
       } catch (err) {
@@ -53,6 +88,21 @@ export function useSystems(): UseSystemsReturn {
 
     loadInitialData();
   }, []);
+
+  // Refresh de todos los sistemas (manual o automático)
+  const refreshAll = useCallback(async () => {
+    try {
+      setError(null);
+      setRefreshing(true);
+      setRefreshProgress({ updated: 0, total: systems.length });
+      await refreshAllSystems();
+      // No actualizamos estado aquí, los updates llegarán por SSE
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Error al refrescar');
+      setRefreshing(false);
+      setRefreshProgress({ updated: 0, total: 0 });
+    }
+  }, [systems.length]);
 
   // Conectar SSE después de carga inicial
   useEffect(() => {
@@ -69,16 +119,14 @@ export function useSystems(): UseSystemsReturn {
     }
   }, [loading, systems.length, connectSSE, updateSystem]);
 
-  // Refresh manual de todos los sistemas
-  const refreshAll = useCallback(async () => {
-    try {
-      setError(null);
-      await refreshAllSystems();
-      // No actualizamos estado aquí, los updates llegarán por SSE
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Error al refrescar');
+  // Auto-refresh al conectar SSE (solo una vez)
+  useEffect(() => {
+    if (sseConnected && !autoRefreshDone && systems.length > 0) {
+      console.log('[useSystems] SSE conectado, disparando auto-refresh...');
+      setAutoRefreshDone(true);
+      refreshAll();
     }
-  }, []);
+  }, [sseConnected, autoRefreshDone, systems.length, refreshAll]);
 
   return {
     systems,
@@ -87,6 +135,8 @@ export function useSystems(): UseSystemsReturn {
     cached,
     lastUpdate,
     sseConnected,
+    refreshing,
+    refreshProgress,
     refreshAll,
   };
 }

@@ -61,12 +61,35 @@ export default {
           '0%, 100%': { opacity: '1' },
           '50%': { opacity: '.7' },
         },
+        // Animaciones para indicadores cache/SSE
+        flash: {
+          '0%, 100%': { opacity: '1' },
+          '50%': { opacity: '0.6' },
+        },
+        'pulse-ring': {
+          '0%': { boxShadow: '0 0 0 0 rgba(34, 197, 94, 0.7)' },
+          '70%': { boxShadow: '0 0 0 6px rgba(34, 197, 94, 0)' },
+          '100%': { boxShadow: '0 0 0 0 rgba(34, 197, 94, 0)' },
+        },
+        'fade-highlight': {
+          '0%': { backgroundColor: 'rgba(34, 197, 94, 0.15)' },
+          '100%': { backgroundColor: 'transparent' },
+        },
+        'pulse-subtle': {
+          '0%, 100%': { opacity: '1' },
+          '50%': { opacity: '0.8' },
+        },
       },
       animation: {
         fadeIn: 'fadeIn 0.3s ease-in-out',
         slideDown: 'slideDown 0.3s ease-out',
         slideUp: 'slideUp 0.3s ease-out',
         pulse: 'pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite',
+        // Animaciones para indicadores cache/SSE
+        flash: 'flash 0.5s ease-in-out',
+        'pulse-ring': 'pulse-ring 1s cubic-bezier(0.4, 0, 0.6, 1)',
+        'fade-highlight': 'fade-highlight 2s ease-out',
+        'pulse-subtle': 'pulse-subtle 2s ease-in-out infinite',
       },
     },
   },

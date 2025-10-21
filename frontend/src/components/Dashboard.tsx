@@ -1,7 +1,7 @@
-import { useState } from 'react';
 import { Header } from './Header';
 import { StatsOverview } from './StatsOverview';
 import { SystemCard } from './SystemCard';
+import { ProgressBar } from './ProgressBar';
 import { useSystems } from '../hooks/useSystems';
 import { calculateSystemStats } from '../lib/utils';
 
@@ -12,21 +12,15 @@ export function Dashboard() {
     error,
     lastUpdate,
     sseConnected,
+    refreshing,
+    refreshProgress,
     refreshAll,
   } = useSystems();
-
-  const [refreshing, setRefreshing] = useState(false);
 
   const stats = calculateSystemStats(systems);
 
   const handleRefresh = async () => {
-    setRefreshing(true);
-    try {
-      await refreshAll();
-    } finally {
-      // Mantener spinner por mínimo 1 segundo para feedback visual
-      setTimeout(() => setRefreshing(false), 1000);
-    }
+    await refreshAll();
   };
 
   if (loading) {
@@ -79,10 +73,22 @@ export function Dashboard() {
         {/* Stats overview */}
         <StatsOverview stats={stats} />
 
+        {/* Progress bar */}
+        <ProgressBar
+          current={refreshProgress.updated}
+          total={refreshProgress.total}
+          visible={refreshing}
+        />
+
         {/* System cards */}
         <div className="space-y-4">
           {systems.map((system) => (
-            <SystemCard key={system.id} system={system} />
+            <SystemCard
+              key={system.id}
+              system={system}
+              sseConnected={sseConnected}
+              isRefreshing={refreshing}
+            />
           ))}
         </div>
 

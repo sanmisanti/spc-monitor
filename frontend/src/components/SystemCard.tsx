@@ -1,3 +1,4 @@
+import { useState, useEffect } from 'react';
 import { ChevronDown, Clock, Zap } from 'lucide-react';
 import * as Accordion from '@radix-ui/react-accordion';
 import type { System } from '../types/system';
@@ -10,15 +11,30 @@ import {
   getAverageResponseTime,
   cn,
 } from '../lib/utils';
+import { DataSourceBadge } from './DataSourceBadge';
 
 interface SystemCardProps {
   system: System;
+  sseConnected: boolean;
+  isRefreshing: boolean;
 }
 
-export function SystemCard({ system }: SystemCardProps) {
+export function SystemCard({ system, sseConnected, isRefreshing }: SystemCardProps) {
   const statusClasses = getStatusClasses(system.status);
   const envBadge = getEnvironmentBadge(system.environment);
   const avgResponseTime = getAverageResponseTime(system.checks);
+
+  // Estado para animaciones cuando se actualiza por SSE
+  const [isUpdating, setIsUpdating] = useState(false);
+
+  // Detectar cuando el sistema se actualiza por SSE
+  useEffect(() => {
+    if (system.source === 'sse') {
+      setIsUpdating(true);
+      const timer = setTimeout(() => setIsUpdating(false), 2000); // Duración de animaciones
+      return () => clearTimeout(timer);
+    }
+  }, [system.last_check, system.source]);
 
   return (
     <Accordion.Root type="single" collapsible className="w-full">
@@ -27,7 +43,9 @@ export function SystemCard({ system }: SystemCardProps) {
           className={cn(
             'rounded-lg border-2 shadow-sm transition-all hover:shadow-md animate-fadeIn',
             statusClasses.bg,
-            statusClasses.border
+            statusClasses.border,
+            // Animaciones cuando se actualiza por SSE
+            isUpdating && 'animate-flash animate-pulse-ring animate-fade-highlight'
           )}
         >
           {/* Header (siempre visible) */}
@@ -39,7 +57,7 @@ export function SystemCard({ system }: SystemCardProps) {
 
                 {/* Info del sistema */}
                 <div className="flex-1 text-left">
-                  <div className="flex items-center gap-2 mb-1">
+                  <div className="flex items-center gap-2 mb-1 flex-wrap">
                     <h3 className={cn('text-xl font-bold', statusClasses.text)}>
                       {system.name}
                     </h3>
@@ -51,6 +69,12 @@ export function SystemCard({ system }: SystemCardProps) {
                     >
                       {envBadge.label}
                     </span>
+                    {/* Badge de origen de datos (Cache/En vivo/Actualizando) */}
+                    <DataSourceBadge
+                      source={system.source}
+                      sseConnected={sseConnected}
+                      isRefreshing={isRefreshing}
+                    />
                   </div>
                   <div className="flex items-center gap-4 text-sm text-gray-600">
                     <span className="flex items-center gap-1">

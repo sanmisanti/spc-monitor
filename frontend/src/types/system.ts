@@ -23,6 +23,9 @@ export interface System {
   status: SystemStatus;
   last_check: string; // ISO date string
   checks: Check[];
+  // Campos para rastrear origen de datos (frontend only)
+  source?: 'cache' | 'sse';
+  localUpdatedAt?: Date;
 }
 
 export interface SystemsResponse {
