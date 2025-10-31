@@ -1,0 +1,24 @@
+{
+  "name": "monitor",
+  "version": "1.0.0",
+  "description": "Sistema de Monitoreo de Infraestructura - Secretaría de Contrataciones",
+  "private": true,
+  "scripts": {
+    "backend": "cd backend && go run ./cmd/server/main.go",
+    "frontend": "cd frontend && pnpm run dev",
+    "dev": "concurrently --kill-others --names \"BACKEND,FRONTEND\" --prefix-colors \"blue,green\" \"pnpm run backend\" \"pnpm run frontend\"",
+    "install:frontend": "cd frontend && pnpm install",
+    "install:all": "pnpm install && pnpm run install:frontend",
+    "build": "cd frontend && pnpm run build"
+  },
+  "keywords": [
+    "monitoring",
+    "dashboard",
+    "infrastructure"
+  ],
+  "author": "Secretaría de Contrataciones",
+  "license": "UNLICENSED",
+  "devDependencies": {
+    "concurrently": "^9.1.2"
+  }
+}

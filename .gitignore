@@ -18,6 +18,11 @@ frontend/dist/
 frontend/node_modules/
 frontend/.env.local
 
+# Node modules y lock files
+node_modules/
+package-lock.json
+pnpm-lock.yaml
+
 # IDEs
 .vscode/
 .idea/

@@ -681,22 +681,254 @@ CACHE_MAX_AGE_MINUTES=35              # Validez de datos en cache
    → Si idle >60 min, se pausa
 ```
 
+### Frontend Implementado
+
+**Fase Actual**: MVP Completo - Backend + Frontend 100% funcional
+
+#### Stack Tecnológico Frontend
+- ✅ React 18 + TypeScript
+- ✅ Vite 7 (build tool ultra-rápido)
+- ✅ TailwindCSS v4 (estilos utility-first)
+- ✅ Radix UI (componentes accesibles headless)
+- ✅ Lucide React (iconos)
+- ✅ EventSource API nativa (SSE)
+- ✅ Fetch API nativa (HTTP)
+
+#### Componentes Implementados (`frontend/src/components/`)
+
+**1. `Dashboard.tsx`** - Layout principal (~90 líneas)
+- Integra todos los componentes
+- Maneja estados de loading y error
+- Skeleton de carga
+- Empty states
+
+**2. `Header.tsx`** - Cabecera (~60 líneas)
+- Logo + título
+- Indicador de conexión SSE (punto verde pulsante)
+- Timestamp de última actualización
+- Botón "Refrescar" con spinner
+
+**3. `StatsOverview.tsx`** - Resumen de métricas (~50 líneas)
+- 4 cards de estadísticas: Total, Online, Warnings, Errores
+- Cálculo de porcentajes
+- Colores dinámicos por estado
+- Helper component: `StatCard` (co-located)
+
+**4. `SystemCard.tsx`** - Cards de sistemas expandibles (~180 líneas)
+- Accordion con Radix UI (expandir/colapsar)
+- Header siempre visible con:
+  - Icono de estado (emoji)
+  - Nombre del sistema
+  - Badge de ambiente (prod/preprod/shared)
+  - Badge de origen de datos (Cache/Actualizando/En vivo)
+  - Tiempo de último check
+  - Tiempo de respuesta promedio
+  - Contador de checks
+- Contenido expandible con:
+  - Lista de checks con metadata detallada
+  - Colores por estado
+  - Response time por check
+- Animaciones al actualizar por SSE:
+  - Flash (opacity pulse 0.5s)
+  - Pulse ring (sombra verde pulsante 1s)
+  - Fade highlight (background que desaparece 2s)
+- Helper component: `CheckItem` (co-located)
+
+**5. `DataSourceBadge.tsx`** - Indicador origen de datos (~65 líneas)
+- **"Cache"** (gris, icono Database) - Datos del cache
+- **"Actualizando..."** (amarillo, icono RefreshCw spinning) - Refresh en curso
+- **"En vivo"** (verde pulsante, icono Radio) - Actualizado por SSE
+- Lógica de prioridad para mostrar estado correcto
+
+**6. `ProgressBar.tsx`** - Barra de progreso de actualización (~60 líneas)
+- Muestra "Actualizando sistemas: X/5"
+- Barra visual con porcentaje animado
+- Icono RefreshCw que gira durante actualización
+- Cambia a verde al completar 100%
+- Se oculta automáticamente después de 500ms
+
+#### Hooks Personalizados (`frontend/src/hooks/`)
+
+**1. `useSSE.ts`** - Manejo de conexión SSE (~70 líneas)
+- Envuelve EventSource API nativa
+- Maneja eventos: `connected`, `system_update`, `check_complete`
+- Auto-cleanup al desmontar
+- Estado de conexión (`connected`, `clientId`)
+- Métodos: `connect()`, `disconnect()`, `isConnected()`
+
+**2. `useSystems.ts`** - Estado principal de sistemas (~140 líneas)
+- **Estrategia híbrida**:
+  1. Carga instantánea del cache (0ms)
+  2. Conecta SSE automáticamente
+  3. Auto-refresh al conectar SSE (sin intervención del usuario)
+- **Rastreo de origen**: Marca cada sistema como `source: 'cache' | 'sse'`
+- **Progreso de actualización**: `refreshProgress: { updated: number, total: number }`
+- **Estados**: `loading`, `error`, `cached`, `refreshing`, `sseConnected`
+- **Actualización incremental**: Contador se incrementa con cada `system_update` recibido
+- **Reseteo automático**: Al completar todos los sistemas, resetea `refreshing` después de 500ms
+
+#### Servicios (`frontend/src/services/`)
+
+**1. `api.ts`** - Cliente HTTP (~50 líneas)
+- `getSystems()` - GET /api/systems (cache)
+- `refreshAllSystems()` - POST /api/refresh
+- `refreshSystem(id)` - POST /api/systems/:id/refresh
+- Usa Fetch API nativa (sin librerías externas)
+
+**2. `sse.ts`** - Cliente SSE (~100 líneas)
+- Clase `SSEClient` que envuelve EventSource
+- Callbacks tipados para cada evento
+- Manejo de errores
+- Cleanup automático
+- Log de eventos en consola
+
+#### Utilidades (`frontend/src/lib/utils.ts`) (~200 líneas)
+
+- `cn()` - Merge de clases Tailwind con clsx + tailwind-merge
+- `getStatusClasses()` - Colores por estado (online/warning/error)
+- `getStatusIcon()` - Emojis por estado
+- `getEnvironmentBadge()` - Estilos por ambiente
+- `formatRelativeTime()` - "hace 2 min" en español
+- `formatResponseTime()` - "127ms"
+- `getAverageResponseTime()` - Calcula promedio de checks
+- `calculateSystemStats()` - Estadísticas agregadas
+
+#### Tipos (`frontend/src/types/system.ts`) (~65 líneas)
+
+Interfaces TypeScript que coinciden exactamente con modelos Go:
+- `System` (con campos extras: `source`, `localUpdatedAt`)
+- `Check`
+- `SystemsResponse`
+- `RefreshResponse`
+- `SSEConnectedEvent`
+- `SSECheckCompleteEvent`
+- `SystemStats`
+
+#### Configuración
+
+**`tailwind.config.js`** - Tema personalizado:
+- Paleta de colores: `success`, `warning`, `error` (50-900)
+- Animaciones:
+  - `fadeIn` - Fade in con translateY
+  - `slideDown` / `slideUp` - Para Accordion
+  - `pulse` - Pulso estándar
+  - `flash` - Flash de opacity (0.5s)
+  - `pulse-ring` - Pulso de sombra (1s)
+  - `fade-highlight` - Fade de background (2s)
+  - `pulse-subtle` - Pulso sutil infinito (2s)
+
+**`postcss.config.js`** - Procesador CSS:
+- `@tailwindcss/postcss` (requerido para Tailwind v4)
+- `autoprefixer`
+
+**`index.css`** - Estilos base:
+- `@import "tailwindcss"` (sintaxis Tailwind v4)
+- Estilos de body con fuentes del sistema
+
+#### Flujo de Usuario Completo
+
+```
+1. Usuario abre http://localhost:5173
+   ├─ GET /api/systems (cache instantáneo)
+   ├─ Muestra loading skeleton
+   ├─ Renderiza dashboard con datos del cache
+   └─ Badges: "Cache" (gris)
+
+2. SSE se conecta automáticamente (~500ms)
+   ├─ EventSource('/api/events')
+   ├─ Recibe evento: connected
+   └─ Hook detecta conexión
+
+3. Auto-refresh se dispara (automático, sin click)
+   ├─ POST /api/refresh (202 Accepted)
+   ├─ Barra aparece: "Actualizando sistemas: 0/5" [0%]
+   ├─ Badges cambian a: "Actualizando..." (amarillo, spinner)
+   └─ Checks se ejecutan en paralelo en backend
+
+4. Sistemas se actualizan progresivamente (~1-10 seg)
+   ├─ SSE envía: system_update (Sistema 1)
+   │   ├─ Card hace: flash + pulse ring + fade highlight
+   │   ├─ Badge cambia a: "En vivo" (verde pulsante)
+   │   └─ Barra: "1/5" [20%]
+   ├─ SSE envía: system_update (Sistema 2)
+   │   ├─ Animaciones visuales
+   │   ├─ Badge: "En vivo"
+   │   └─ Barra: "2/5" [40%]
+   └─ ... (continúa hasta 5/5)
+
+5. Actualización completa (~5-10 seg total)
+   ├─ Barra: "5/5" [100%] (verde)
+   ├─ SSE envía: check_complete
+   ├─ Después de 500ms: barra desaparece con fade
+   ├─ Todos los badges: "En vivo" (pulsantes)
+   └─ Botón "Refrescar" listo para uso manual
+```
+
+#### Características Frontend
+
+✅ **Carga instantánea** - Cache en <10ms
+✅ **Auto-refresh automático** - Al conectar SSE
+✅ **Updates en tiempo real** - Vía SSE sin polling
+✅ **Indicadores de origen** - Cache/Actualizando/En vivo
+✅ **Barra de progreso** - "X/5 sistemas" con porcentaje
+✅ **Animaciones visuales** - Flash, pulse ring, fade highlight
+✅ **Cards expandibles** - Accordion sin routing
+✅ **Metadata detallada** - Muestra hasta 6 campos por check
+✅ **Responsive design** - Grid adaptativo
+✅ **Loading states** - Skeleton, error states, empty states
+✅ **Colores dinámicos** - Verde/amarillo/rojo por estado
+✅ **Timestamps relativos** - "hace X min" en español
+✅ **Botón manual** - Refresh forzado disponible
+✅ **Zero runtime overhead** - Sin Redux, Context, styled-components
+✅ **Minimal bundle** - ~570 líneas, <150KB gzipped
+
+#### Gestión de Paquetes
+
+**pnpm** configurado como manejador de paquetes:
+- `pnpm-workspace.yaml` - Configuración de workspace
+- `package.json` (raíz) - Scripts de ejecución:
+  - `pnpm backend` - Ejecuta solo backend
+  - `pnpm frontend` - Ejecuta solo frontend
+  - `pnpm dev` - Ejecuta ambos con concurrently
+  - `pnpm build` - Build del frontend
+  - `pnpm install:all` - Instala deps de raíz + frontend
+- `.gitignore` actualizado para pnpm
+
 ### Pendiente
-- Frontend React + Vite
 - Autenticación y seguridad
+- Historial de checks/logs
+- Notificaciones/alertas
+- Configuración de umbrales desde UI
+- Deploy a producción
 
 ## Desarrollo y Testing
 
 ### Ejecución en Desarrollo
 
-**IMPORTANTE**: Durante el desarrollo, siempre ejecutar el servidor con `go run` en lugar de compilar:
+**RECOMENDADO**: Usar los scripts desde la raíz del proyecto con pnpm:
 
 ```bash
-cd backend
-go run ./cmd/server/main.go
+# Ejecutar backend + frontend simultáneamente
+pnpm dev
+
+# O ejecutarlos por separado:
+pnpm backend   # Solo backend en localhost:8080
+pnpm frontend  # Solo frontend en localhost:5173
 ```
 
-**Razones:**
+**Ejecución directa (alternativa):**
+
+```bash
+# Backend
+cd backend
+go run ./cmd/server/main.go
+
+# Frontend
+cd frontend
+pnpm dev
+```
+
+**Razones para usar `go run`:**
 - Cambios se reflejan inmediatamente sin necesidad de compilar
 - Más rápido para iterar durante desarrollo
 - Evita tener binarios desactualizados
