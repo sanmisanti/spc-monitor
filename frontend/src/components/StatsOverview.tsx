@@ -51,22 +51,22 @@ interface StatCardProps {
 function StatCard({ icon, label, value, percentage, className }: StatCardProps) {
   return (
     <div
-      className={`rounded-lg border-2 p-4 shadow-sm transition-all hover:shadow-md ${className}`}
+      className={`rounded-xl border-2 p-5 shadow-md transition-all hover:shadow-lg hover:scale-[1.02] ${className}`}
     >
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-3">
+      <div className="flex items-start gap-4">
+        <div className="p-3 rounded-lg bg-white/60 backdrop-blur-sm">
           {icon}
-          <div>
-            <p className="text-sm font-medium opacity-80">{label}</p>
-            <p className="text-2xl font-bold">
-              {value}
-              {percentage !== undefined && (
-                <span className="text-sm font-normal ml-2">
-                  ({percentage}%)
-                </span>
-              )}
+        </div>
+        <div className="flex-1">
+          <p className="text-sm font-semibold opacity-80 uppercase tracking-wide mb-1">{label}</p>
+          <p className="text-3xl font-extrabold">
+            {value}
+          </p>
+          {percentage !== undefined && (
+            <p className="text-sm font-medium opacity-70 mt-1">
+              {percentage}% del total
             </p>
-          </div>
+          )}
         </div>
       </div>
     </div>

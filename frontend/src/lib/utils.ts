@@ -50,19 +50,86 @@ export function getStatusClasses(status: SystemStatus) {
 }
 
 /**
- * Obtiene el ícono según el estado
+ * Obtiene el nombre del ícono de Lucide según el estado
  */
 export function getStatusIcon(status: SystemStatus): string {
   switch (status) {
     case 'online':
-      return '✅';
+      return 'CheckCircle2';
     case 'warning':
-      return '⚠️';
+      return 'AlertTriangle';
     case 'error':
-      return '❌';
+      return 'XCircle';
     default:
-      return '❓';
+      return 'HelpCircle';
   }
+}
+
+/**
+ * Obtiene el nombre del ícono de Lucide según el tipo de check
+ */
+export function getCheckIconName(type: string): string {
+  const lowerType = type.toLowerCase();
+
+  if (lowerType.includes('http') || lowerType.includes('web')) return 'Globe';
+  if (lowerType.includes('ssl') || lowerType.includes('certificate')) return 'Shield';
+  if (lowerType.includes('database') || lowerType.includes('db') || lowerType.includes('mail')) return 'Database';
+  if (lowerType.includes('vpn') || lowerType.includes('network')) return 'Wifi';
+  if (lowerType.includes('domain') || lowerType.includes('rdap')) return 'Globe2';
+  if (lowerType.includes('sheet') || lowerType.includes('spreadsheet')) return 'FileSpreadsheet';
+
+  return 'Activity';
+}
+
+/**
+ * Genera un resumen corto del check para mostrar en badge inline
+ */
+export function getCheckBadgeSummary(check: {
+  type: string;
+  name: string;
+  status: string;
+  response_time_ms: number;
+  metadata?: Record<string, any>;
+}): string {
+  const lowerType = check.type.toLowerCase();
+
+  // HTTP check: mostrar response time
+  if (lowerType.includes('http')) {
+    return formatResponseTime(check.response_time_ms);
+  }
+
+  // SSL check: mostrar días restantes
+  if (lowerType.includes('ssl') && check.metadata?.ssl_days_remaining !== undefined) {
+    return `${check.metadata.ssl_days_remaining}d`;
+  }
+
+  // Mail check: mostrar enviados/total
+  if (lowerType.includes('mail') && check.metadata?.today_sent !== undefined) {
+    return `${check.metadata.today_sent}/${check.metadata.today_total}`;
+  }
+
+  // VPN check: mostrar "OK" o "Down"
+  if (lowerType.includes('vpn')) {
+    return check.status === 'online' ? 'OK' : 'Down';
+  }
+
+  // PostgreSQL check: mostrar conteo de usuarios
+  if (lowerType.includes('postgresql') && check.metadata?.user_count !== undefined) {
+    return `${check.metadata.user_count} users`;
+  }
+
+  // Domain check: mostrar días hasta expiración
+  if (lowerType.includes('domain') && check.metadata?.days_remaining !== undefined) {
+    return `${check.metadata.days_remaining}d`;
+  }
+
+  // Google Sheets check: mostrar antigüedad
+  if (lowerType.includes('sheet') && check.metadata?.days_old !== undefined) {
+    return check.metadata.days_old === 0 ? 'Hoy' : `${check.metadata.days_old}d`;
+  }
+
+  // Default: solo response time
+  return formatResponseTime(check.response_time_ms);
 }
 
 /**

@@ -15,14 +15,14 @@ export function Header({ lastUpdate, sseConnected, onRefresh, refreshing }: Head
         <div className="flex items-center justify-between">
           {/* Logo y título */}
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 bg-gradient-to-br from-blue-600 to-indigo-600 rounded-lg flex items-center justify-center shadow-lg">
-              <Activity className="w-6 h-6 text-white" />
+            <div className="w-12 h-12 bg-gradient-to-br from-primary-500 to-primary-700 rounded-xl flex items-center justify-center shadow-lg">
+              <Activity className="w-7 h-7 text-white" />
             </div>
             <div>
-              <h1 className="text-2xl font-bold text-gray-900">
+              <h1 className="text-2xl font-extrabold text-gray-900">
                 Monitor de Sistemas
               </h1>
-              <p className="text-sm text-gray-500">
+              <p className="text-sm text-gray-600 font-medium">
                 Secretaría de Contrataciones
               </p>
             </div>
@@ -53,7 +53,7 @@ export function Header({ lastUpdate, sseConnected, onRefresh, refreshing }: Head
             <button
               onClick={onRefresh}
               disabled={refreshing}
-              className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors shadow-sm"
+              className="flex items-center gap-2 px-5 py-2.5 bg-primary-500 text-white font-semibold rounded-lg hover:bg-primary-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors shadow-md hover:shadow-lg"
             >
               <RefreshCw
                 className={`w-4 h-4 ${refreshing ? 'animate-spin' : ''}`}
